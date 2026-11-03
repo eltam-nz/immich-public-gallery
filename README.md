@@ -21,13 +21,17 @@ Other guarantees:
 - **Metadata allowlist.** Everything sent to the public API passes through `toPublicPhoto` in `packages/shared/src/index.ts`. Fields not copied there can't leak.
 - **GPS hidden by default.** `DEFAULT_GPS_PRECISION=-1` hides coordinates. City, state and country are still shown. You can override this per photo (`photos_meta.gps_precision`).
 - **Least-privilege database.** The public role can read the admin tables but not write them.
-- **Isolated networks.** cloudflared can only reach `public-web`. The database sits on an `internal` network with no internet access. No host ports are published.
+- **Isolated networks (bundled-tunnel mode).** cloudflared can only reach `public-web`, and only cloudflared has outbound internet (its own `egress` network). `public-web`, `public-api` and the database sit on `internal` networks with no internet access through this stack; `public-api` also joins your Immich network to reach Immich. No host ports are published.
+- **Shared-tunnel mode weakens isolation.** With `docker-compose.shared-tunnel.yml`, `public-web` joins your existing tunnel network. It can reach, and be reached by, every other container on that network, and it gains outbound internet access through it. Use bundled-tunnel mode if you want strict isolation.
 - **Read-only web container.** nginx rejects anything except GET/HEAD and sets a strict CSP (no inline scripts or styles). Containers run read-only, non-root, with all capabilities dropped.
 - **Outage-safe.** If Immich is unreachable during a sync, nothing is deleted. Photos are only removed when Immich says they're gone or the link has been revoked.
 
 ```
-Internet → Cloudflare → cloudflared ─(edge)→ public-web (nginx) ─(backend)→ public-api ─(immich net)→ Immich
-                                                                               └─(backend)→ Postgres
+Bundled tunnel:
+Internet → Cloudflare → cloudflared ─(edge, internal)→ public-web (nginx) ─(backend)→ public-api ─(immich net)→ Immich
+                          └─(egress)→ internet                                          └─(backend)→ Postgres
+
+Shared tunnel: your existing cloudflared ─(TUNNEL_NETWORK)→ public-web (alias immich-showcase-web); the rest is unchanged.
 ```
 
 ## Setup
@@ -37,17 +41,28 @@ Internet → Cloudflare → cloudflared ─(edge)→ public-web (nginx) ─(back
 2. Share it → **Create link**. Turn **Show metadata** on, leave the password empty, and set no expiry (or one you'll renew).
 3. Copy the key, which is the part after `/share/` in the link.
 
-### 2. In Cloudflare Zero Trust
-1. **Networks → Tunnels → Create tunnel** (cloudflared). Copy the token.
+### 2. Choose a tunnel mode
+
+**Bundled tunnel (default, strictest isolation).** The stack runs its own cloudflared.
+1. In Cloudflare Zero Trust, go to **Networks → Tunnels → Create tunnel** (cloudflared) and copy the token.
 2. Add the public hostname `photos.example.com` → service `http://public-web:8080`.
-3. Recommended:
-   - A cache rule for `photos.example.com/img/*` (eligible for cache, long edge TTL).
-   - A rate-limiting rule on `/api/*`.
-   - Bot Fight Mode on.
+3. In the stack's variables, set `COMPOSE_PROFILES=bundled-tunnel` and `TUNNEL_TOKEN`.
+
+**Shared tunnel.** Use a cloudflared container you already run.
+1. Note the Docker network that cloudflared container is on (`docker network ls`), e.g. `proxy`.
+2. In Portainer, add `docker-compose.shared-tunnel.yml` under **Additional paths** when creating the stack.
+3. Set `TUNNEL_NETWORK` to that network. Do **not** set `COMPOSE_PROFILES` or `TUNNEL_TOKEN`.
+4. In that tunnel's configuration, add the public hostname `photos.example.com` → service `http://immich-showcase-web:8080`.
+5. Read the shared-tunnel caveat under "How it stays secure".
+
+**In either mode, recommended Cloudflare settings:**
+- A cache rule for `photos.example.com/img/*` (eligible for cache, long edge TTL).
+- A rate-limiting rule on `/api/*`.
+- Bot Fight Mode on.
 
 ### 3. In Portainer
 1. **Stacks → Add stack → Repository.** Point it at this repo, with compose path `docker-compose.yml`.
-2. Add the variables from `.env.example`. Generate secrets with `openssl rand -base64 36`.
+2. Add the variables from `.env.example` for your tunnel mode. Generate secrets with `openssl rand -hex 32` (hex, because `PUBLIC_DB_PASSWORD` goes into a connection URL where base64's `/` and `+` break it).
 3. Set `IMMICH_NETWORK` to your Immich stack's network (run `docker network ls`; it's usually `immich_default`). Set `IMMICH_URL` to `http://immich_server:2283`.
 4. Deploy. Portainer builds the images on the server. The first sync runs at startup and then every `SYNC_INTERVAL_MINUTES`.
 

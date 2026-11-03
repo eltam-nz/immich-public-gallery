@@ -1,5 +1,10 @@
 # Portainer stack: Stacks → Add stack → Repository (compose path: docker-compose.yml),
 # then set the variables from .env.example under "Environment variables".
+#
+# Tunnel modes (see README):
+#   - Bundled tunnel: set COMPOSE_PROFILES=bundled-tunnel and TUNNEL_TOKEN.
+#   - Shared tunnel:  add docker-compose.shared-tunnel.yml as an additional compose file
+#                     and set TUNNEL_NETWORK; leave COMPOSE_PROFILES and TUNNEL_TOKEN unset.
 name: immich-showcase
 
 x-hardening: &hardening
@@ -65,18 +70,24 @@ services:
     networks: [edge, backend]
     depends_on: [public-api]
 
+  # Bundled tunnel. Only starts with COMPOSE_PROFILES=bundled-tunnel.
   cloudflared:
     <<: *hardening
+    profiles: [bundled-tunnel]
     image: cloudflare/cloudflared:2025.4.0
     command: tunnel --no-autoupdate run
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN}
-    networks: [edge]
+      # Not ":?" because Compose validates required variables even for inactive profiles.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    networks: [edge, egress]
     depends_on: [public-web]
 
 networks:
-  # cloudflared <-> public-web only. Needs outbound internet for the tunnel.
-  edge: {}
+  # cloudflared <-> public-web only. No internet access.
+  edge:
+    internal: true
+  # Outbound internet for the bundled cloudflared only.
+  egress: {}
   # db, migrate, public-api, public-web. No internet access.
   backend:
     internal: true

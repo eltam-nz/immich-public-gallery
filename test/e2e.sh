@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 export COMPOSE_PROJECT_NAME=immich-showcase
 export DB_OWNER_PASSWORD=owner-test-pw PUBLIC_DB_PASSWORD=public-test-pw
 export PUBLIC_ID_SECRET=test-secret-test-secret-test-secret-123
-export TUNNEL_TOKEN=unused IMMICH_NETWORK=showcase_test_immich
+export IMMICH_NETWORK=showcase_test_immich
 export SHARED_LINK_KEYS=test-shared-link-key SYNC_INTERVAL_MINUTES=60 SITE_TITLE="E2E Photos"
 DC="docker compose -f docker-compose.yml -f docker-compose.test.yml"
 
@@ -83,5 +83,12 @@ pass "revoked shared link unpublishes everything"
 out=$($DC exec -T -e PGPASSWORD="$PUBLIC_DB_PASSWORD" db psql -U showcase_public -d showcase -h 127.0.0.1 -c "UPDATE photos_meta SET visible=false" 2>&1 || true)
 echo "$out" | grep -q "permission denied" || fail "public role can write admin tables: $out"
 pass "public DB role is read-only on admin tables"
+
+# Isolation: edge/backend are internal, and the bundled tunnel is off without its profile.
+for net in edge backend; do
+  [ "$(docker network inspect -f '{{.Internal}}' "${COMPOSE_PROJECT_NAME}_$net")" = true ] || fail "$net network is not internal"
+done
+[ -z "$($DC ps -q cloudflared 2>/dev/null)" ] || fail "cloudflared started without the bundled-tunnel profile"
+pass "edge/backend networks internal; cloudflared off without profile"
 
 echo "ALL E2E CHECKS PASSED"

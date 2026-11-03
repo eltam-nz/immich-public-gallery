@@ -11,6 +11,9 @@ services:
       IMMICH_URL: http://mock-immich:2283
     depends_on: [mock-immich]
   public-web:
+    # edge and backend are internal, so published ports need a non-internal network.
+    networks: [edge, backend, hostaccess]
     ports: ["127.0.0.1:8088:8080"]
-  cloudflared:
-    profiles: [disabled]
+
+networks:
+  hostaccess: {}
