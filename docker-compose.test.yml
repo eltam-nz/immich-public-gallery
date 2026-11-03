@@ -1,0 +1,16 @@
+# Local end-to-end test against a mock Immich. Usage: see test/e2e.sh
+services:
+  mock-immich:
+    image: node:22-alpine
+    command: node /mock/server.mjs
+    volumes: ["./test/mock-immich:/mock:ro"]
+    networks: [immich]
+    ports: ["127.0.0.1:2283:2283"]
+  public-api:
+    environment:
+      IMMICH_URL: http://mock-immich:2283
+    depends_on: [mock-immich]
+  public-web:
+    ports: ["127.0.0.1:8088:8080"]
+  cloudflared:
+    profiles: [disabled]

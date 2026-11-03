@@ -1,0 +1,90 @@
+# Portainer stack: Stacks → Add stack → Repository (compose path: docker-compose.yml),
+# then set the variables from .env.example under "Environment variables".
+name: immich-showcase
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: showcase
+      POSTGRES_USER: showcase_owner
+      POSTGRES_PASSWORD: ${DB_OWNER_PASSWORD:?set DB_OWNER_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U showcase_owner -d showcase"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot: creates the least-privilege role and applies migrations, then exits.
+  migrate:
+    build: { context: ., dockerfile: db/Dockerfile }
+    restart: "no"
+    environment:
+      PGHOST: db
+      PGDATABASE: showcase
+      PGUSER: showcase_owner
+      PGPASSWORD: ${DB_OWNER_PASSWORD:?set DB_OWNER_PASSWORD}
+      PUBLIC_DB_PASSWORD: ${PUBLIC_DB_PASSWORD:?set PUBLIC_DB_PASSWORD}
+    networks: [backend]
+    depends_on:
+      db: { condition: service_healthy }
+
+  public-api:
+    <<: *hardening
+    build: { context: ., dockerfile: apps/public-api/Dockerfile }
+    environment:
+      DATABASE_URL: postgres://showcase_public:${PUBLIC_DB_PASSWORD}@db:5432/showcase
+      IMMICH_URL: ${IMMICH_URL:-http://immich_server:2283}
+      SHARED_LINK_KEYS: ${SHARED_LINK_KEYS:-}
+      PUBLIC_ID_SECRET: ${PUBLIC_ID_SECRET:?set PUBLIC_ID_SECRET}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
+      DEFAULT_GPS_PRECISION: ${DEFAULT_GPS_PRECISION:--1}
+      SITE_TITLE: ${SITE_TITLE:-Photos}
+      CACHE_DIR: /cache
+    volumes:
+      - image-cache:/cache
+    tmpfs: [/tmp]
+    networks: [backend, immich]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  public-web:
+    <<: *hardening
+    build: { context: ., dockerfile: apps/public-web/Dockerfile }
+    tmpfs: [/tmp]
+    networks: [edge, backend]
+    depends_on: [public-api]
+
+  cloudflared:
+    <<: *hardening
+    image: cloudflare/cloudflared:2025.4.0
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN}
+    networks: [edge]
+    depends_on: [public-web]
+
+networks:
+  # cloudflared <-> public-web only. Needs outbound internet for the tunnel.
+  edge: {}
+  # db, migrate, public-api, public-web. No internet access.
+  backend:
+    internal: true
+  # Your existing Immich stack's network, so public-api can reach immich_server.
+  immich:
+    external: true
+    name: ${IMMICH_NETWORK:-immich_default}
+
+volumes:
+  db-data:
+  image-cache:
