@@ -50,7 +50,7 @@
 
 <header>
   <h1>{title}</h1>
-  {#if collections.length > 1}
+  {#if collections.length > 0}
     <nav aria-label="Collections">
       <button class:active={!collection} onclick={() => selectCollection(null)}>All</button>
       {#each collections as c (c.id)}

@@ -4,7 +4,8 @@
 #   docker compose -f docker-compose.yml -f docker-compose.shared-tunnel.yml up -d
 #   (Portainer: add this file under "Additional paths")
 #
-# Route the tunnel hostname to http://immich-showcase-web:8080
+# Route the public hostname to http://immich-showcase-web:8080
+# Route the admin hostname  to http://immich-showcase-admin:3001 (behind Cloudflare Access)
 # Note: this weakens isolation. See "How it stays secure" in the README.
 services:
   public-web:
@@ -13,6 +14,13 @@ services:
       backend: {}
       tunnel:
         aliases: [immich-showcase-web]
+  admin-app:
+    networks:
+      edge: {}
+      backend: {}
+      egress: {}
+      tunnel:
+        aliases: [immich-showcase-admin]
 
 networks:
   tunnel:

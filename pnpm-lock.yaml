@@ -12,6 +12,52 @@ importers:
         specifier: ^7.1.3
         version: 7.1.3
 
+  apps/admin-app:
+    dependencies:
+      '@showcase/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      fastify:
+        specifier: ^5.12.0
+        version: 5.12.8
+      jose:
+        specifier: ^6.0.11
+        version: 6.2.17
+      postgres:
+        specifier: ^3.4.7
+        version: 3.4.9
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@sveltejs/vite-plugin-svelte':
+        specifier: ^5.1.0
+        version: 5.1.1(svelte@5.57.3)(vite@6.4.5(@types/node@22.20.5)(tsx@4.23.15))
+      '@tsconfig/svelte':
+        specifier: ^5.0.4
+        version: 5.0.8
+      '@types/node':
+        specifier: ^22.16.0
+        version: 22.20.5
+      svelte:
+        specifier: ^5.35.0
+        version: 5.57.3
+      svelte-check:
+        specifier: ^4.2.2
+        version: 4.7.8(picomatch@4.0.7)(svelte@5.57.3)(typescript@5.8.3)
+      tsx:
+        specifier: ^4.20.3
+        version: 4.23.15
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+      vite:
+        specifier: ^6.3.5
+        version: 6.4.5(@types/node@22.20.5)(tsx@4.23.15)
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@22.20.5)(tsx@4.23.15)
+
   apps/public-api:
     dependencies:
       '@fastify/rate-limit':
@@ -959,6 +1005,9 @@ packages:
 
   is-reference@3.0.3:
     resolution: {integrity: sha512-ixkJoqQvAP88E6wLydLGGqCJsrFUnqoH6HnaczB8XmDH1oaWU+xxdptvikTgaEhtZ53Ky6YXiBuUI2WXLMCwjw==}
+
+  jose@6.2.17:
+    resolution: {integrity: sha512-wOuK9V1yujQFH5S0ZWmLcDZN7+IKh9bUCC2ZPCf2HDlol3WWHy+PPyNjEI75FXRLMp3vDKQcupP59xhVU95hcg==}
 
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
@@ -1944,6 +1993,8 @@ snapshots:
   is-reference@3.0.3:
     dependencies:
       '@types/estree': 1.0.10
+
+  jose@6.2.17: {}
 
   js-tokens@9.0.1: {}
 

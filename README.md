@@ -2,7 +2,7 @@
 
 A self-hosted public photo site built from selected Immich albums. It runs as a Portainer stack and is published through a Cloudflare Tunnel. Immich itself is never exposed.
 
-**Status:** Phase 1 (foundation) is done: sync from Immich shared links, image caching with metadata stripped, the public gallery, and the stack. The admin app (Phase 3) is next.
+**Status:** Phase 1 (foundation) and Phase 3 (admin app) are done. One Immich album is shared through a link key. Everything else is managed inside the gallery, from a private admin app: sub-album collections, captions, tags, visibility and location precision.
 
 ## How it stays secure
 
@@ -20,7 +20,9 @@ Other guarantees:
 - **Fixed Immich calls only.** public-api only ever calls `shared-links/me`, `albums/:id`, `timeline/buckets` and `timeline/bucket` (to list an album's assets on current Immich), `assets/:id` (date and EXIF), `assets/:id/thumbnail`, and the public `server/version` (logged for diagnostics). All of them use the shared-link key, never an API key. The e2e test checks this list against both current and older Immich API shapes.
 - **Metadata allowlist.** Everything sent to the public API passes through `toPublicPhoto` in `packages/shared/src/index.ts`. Fields not copied there can't leak.
 - **GPS hidden by default.** `DEFAULT_GPS_PRECISION=-1` hides coordinates. City, state and country are still shown. You can override this per photo (`photos_meta.gps_precision`).
-- **Least-privilege database.** The public role can read the admin tables but not write them.
+- **Least-privilege database.** The public role can read the admin tables but not write them. The admin role can edit the admin tables (photo overrides, collections) but can only read synced data.
+- **Admin app behind two locks.** Cloudflare Access must let you in, and the app then verifies Access's signed token itself (issuer, audience, expiry, signature) and checks your email against `ADMIN_EMAILS`. A request that reaches the container any other way is rejected. Without these settings the app refuses to start. Changes also need a custom request header and a same-origin request, which blocks cross-site request forgery.
+- **The admin app never talks to Immich.** It has no Immich key and no route to Immich. "Sync now" is a database notification that the public API acts on.
 - **Isolated networks (bundled-tunnel mode).** cloudflared can only reach `public-web`, and only cloudflared has outbound internet (its own `egress` network). `public-web`, `public-api` and the database sit on `internal` networks with no internet access through this stack; `public-api` also joins your Immich network to reach Immich. No host ports are published.
 - **Shared-tunnel mode weakens isolation.** With `docker-compose.shared-tunnel.yml`, `public-web` joins your existing tunnel network. It can reach, and be reached by, every other container on that network, and it gains outbound internet access through it. Use bundled-tunnel mode if you want strict isolation.
 - **Read-only web container.** nginx rejects anything except GET/HEAD and sets a strict CSP (no inline scripts or styles). Containers run read-only, non-root, with all capabilities dropped.
@@ -66,6 +68,23 @@ Shared tunnel: your existing cloudflared ─(TUNNEL_NETWORK)→ public-web (alia
 3. Set `IMMICH_NETWORK` to your Immich stack's network (run `docker network ls`; it's usually `immich_default`). Set `IMMICH_URL` to `http://immich_server:2283`.
 4. Deploy. Portainer builds the images on the server. The first sync runs at startup and then every `SYNC_INTERVAL_MINUTES`.
 
+### 4. Admin app (`gallery-admin` hostname)
+1. In Cloudflare Zero Trust, go to **Access → Applications → Add an application → Self-hosted**. Set the domain to your admin hostname (e.g. `gallery-admin.example.com`). Add an **Allow** policy with **Emails** set to your address, and use one-time PIN login.
+2. On that application's **Overview**, copy the **Application Audience (AUD) Tag**. Your team domain (`<team>.cloudflareaccess.com`) is under **Settings → Custom Pages**.
+3. Set the stack variables `ADMIN_DB_PASSWORD`, `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `ADMIN_EMAILS` (your email) and, optionally, `PUBLIC_SITE_URL`. Then redeploy.
+4. Add the tunnel's public hostname:
+   - Shared tunnel: `gallery-admin.example.com` → `http://immich-showcase-admin:3001`.
+   - Bundled tunnel: `gallery-admin.example.com` → `http://admin-app:3001`.
+
+   Create the Access application **before** the route. If the route goes live first, the app still rejects everyone, because no valid Access token exists yet.
+
+In the admin app:
+- **Photos:** show or hide photos, feature them, and edit captions, tags, sort order and how precisely the location is published. Bulk-select to hide, show or feature photos, or add them to (or remove them from) a collection.
+- **Collections:** sub-albums inside the gallery. A photo can be in several. Each has a title, an optional URL name (`/?c=<name>`), a description, visibility, order and a cover photo.
+- **Sync:** last sync result, Immich version, and **Sync now**.
+
+If the admin container keeps restarting, check its logs. It refuses to start with a clear message when an Access setting is missing.
+
 ### Data and backups
 Everything the stack stores lives in bind mounts under `DATA_DIR` (default `/srv/docker/immich-showcase`). Docker creates the folders on first deploy.
 
@@ -98,17 +117,18 @@ pnpm build && pnpm test
 
 The last command runs an end-to-end test of the full stack against a mock Immich. It needs Docker.
 
-Per-photo overrides live in `photos_meta` and per-album overrides in `collections`:
+Admin-managed data:
 - `photos_meta`: visibility, caption, tags, featured, sort, GPS precision, and `custom` jsonb for future inputs.
-- `collections`: title, slug, visibility, order.
+- `collections` and `collection_photos`: gallery sub-albums and their photos.
 
-Until the admin app exists, you can edit these with `psql` as the owner role.
+To run the admin UI locally against the test stack, use `KEEP=1 ./test/e2e.sh`. The admin app is then on `127.0.0.1:8089` and needs a `Cf-Access-Jwt-Assertion` header. The mock issues test tokens at `http://127.0.0.1:2283/__control/sign`.
 
 ## Layout
 
 ```
 apps/public-api    Fastify: sync job + read-only JSON/image API
 apps/public-web    Svelte 5 + Vite gallery, served by nginx
+apps/admin-app     Fastify API + Svelte 5 admin UI (Cloudflare Access protected)
 packages/shared    Public types + metadata allowlist (shared by API and web)
 db/                Migrations + one-shot migrator image
 deploy/nginx       nginx config (CSP, headers, proxy to API)
@@ -120,10 +140,7 @@ test/              Mock Immich + end-to-end test
 - **Phase 2:**
   - Metadata features: timeline, coarse map, camera/lens filters, tag filters.
   - Pagination for large libraries.
-- **Phase 3:** `admin-app` on `admin.example.com`, behind Cloudflare Access (allow only your email). The app verifies the `Cf-Access-Jwt-Assertion` JWT, uses a scoped Immich API key, and covers:
-  - album and shared-link management
-  - per-photo visibility, caption and GPS settings
-  - a "sync now" button
+- **Phase 3 (done):** admin app.
 - **Phase 4:** extra inputs (the `custom` fields).
 - **Phase 5:**
   - Automated DB backups (`pg_dump` of `DATA_DIR/postgres`).

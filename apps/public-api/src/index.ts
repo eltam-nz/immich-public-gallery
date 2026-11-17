@@ -12,6 +12,12 @@ const syncer = new Syncer(cfg, sql, app.log);
 
 const runSync = () => syncer.run().catch((err) => app.log.error({ err }, 'sync crashed'));
 await app.listen({ host: '0.0.0.0', port: cfg.PORT });
+// The admin app asks for an immediate sync with NOTIFY showcase_sync. Using the
+// database means the admin app needs no network route to this container.
+await sql.listen('showcase_sync', () => {
+  app.log.info('sync requested by admin');
+  void runSync();
+});
 void runSync();
 const timer = setInterval(runSync, cfg.SYNC_INTERVAL_MINUTES * 60_000);
 

@@ -4,6 +4,7 @@
 // MOCK_IMMICH_MODE=current (default): like current Immich, the album response has
 //   assetCount but no assets; assets are listed via /timeline/* and /assets/:id.
 // MOCK_IMMICH_MODE=legacy: like older Immich, the album response includes assets.
+import { createSign, generateKeyPairSync } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
@@ -26,6 +27,16 @@ let assets = [
   { id: id(3), type: 'IMAGE', checksum: 'c3', localDateTime: '2023-12-24T18:30:00.000Z', exifInfo: exif({ city: 'Bath' }), file: 'c.jpg' },
   { id: id(4), type: 'VIDEO', checksum: 'c4', localDateTime: '2024-01-01T00:00:00.000Z', exifInfo: null, file: 'a.jpg' },
 ];
+// Stand-in for Cloudflare Access: signing keys + a test token issuer.
+const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const accessJwk = { ...publicKey.export({ format: 'jwk' }), kid: 'test-key', alg: 'RS256', use: 'sig' };
+const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+function signAccessToken({ email, aud = 'test-aud', iss = 'https://test.cloudflareaccess.com', expSeconds = 300 }) {
+  const now = Math.floor(Date.now() / 1000);
+  const body = `${b64({ alg: 'RS256', kid: 'test-key', typ: 'JWT' })}.${b64({ email, aud: [aud], iss, iat: now, exp: now + expSeconds, type: 'app' })}`;
+  return `${body}.${createSign('RSA-SHA256').update(body).sign(privateKey).toString('base64url')}`;
+}
+
 let revoked = false;
 let brokenTimeline = false; // simulate an API change: timeline lists nothing
 let detail404 = null; // asset id whose /assets/:id returns 404
@@ -47,8 +58,17 @@ createServer(async (req, res) => {
     if (url.pathname === '/__control/remove-one') { assets = assets.filter((a) => a.id !== id(3)); return json(res, 200, { ok: true }); }
     if (url.pathname === '/__control/detail-404') { detail404 = id(2); return json(res, 200, { ok: true }); }
     if (url.pathname === '/__control/mode') return json(res, 200, { mode: MODE });
+    if (url.pathname === '/__control/sign') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      return res.end(signAccessToken({
+        email: url.searchParams.get('email') ?? 'admin@example.com',
+        aud: url.searchParams.get('aud') ?? undefined,
+        expSeconds: Number(url.searchParams.get('exp') ?? 300),
+      }));
+    }
     if (url.pathname === '/__control/break-timeline') { brokenTimeline = true; return json(res, 200, { ok: true }); }
   }
+  if (url.pathname === '/cdn-cgi/access/certs') return json(res, 200, { keys: [accessJwk] });
   requests.push(`${req.method} ${url.pathname}${url.searchParams.has('size') ? `?size=${url.searchParams.get('size')}` : ''}`);
   if (url.pathname === '/api/server/version') return json(res, 200, { major: MODE === 'legacy' ? 1 : 2, minor: 0, patch: 0 });
   if (url.searchParams.get('key') !== KEY || revoked) return json(res, 401, { message: 'Invalid share key' });

@@ -51,6 +51,7 @@ services:
       PGUSER: showcase_owner
       PGPASSWORD: ${DB_OWNER_PASSWORD:?set DB_OWNER_PASSWORD}
       PUBLIC_DB_PASSWORD: ${PUBLIC_DB_PASSWORD:?set PUBLIC_DB_PASSWORD}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:?set ADMIN_DB_PASSWORD}
     networks: [backend]
     depends_on:
       db: { condition: service_healthy }
@@ -82,6 +83,28 @@ services:
     networks: [edge, backend]
     depends_on: [public-api]
 
+  # Private admin app. Requires Cloudflare Access in front of its hostname, and
+  # verifies the Access token itself: without CF_ACCESS_* and ADMIN_EMAILS it
+  # refuses to start (fails closed).
+  admin-app:
+    <<: *hardening
+    build: { context: ., dockerfile: apps/admin-app/Dockerfile }
+    environment:
+      DATABASE_URL: postgres://showcase_admin:${ADMIN_DB_PASSWORD}@db:5432/showcase
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
+      DEFAULT_GPS_PRECISION: ${DEFAULT_GPS_PRECISION:--1}
+      CACHE_DIR: /cache
+    volumes:
+      - ${DATA_DIR:-/srv/docker/immich-showcase}/cache:/cache:ro
+    tmpfs: [/tmp]
+    # egress: fetches Cloudflare Access signing keys.
+    networks: [edge, backend, egress]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
   # Bundled tunnel. Only starts with COMPOSE_PROFILES=bundled-tunnel.
   cloudflared:
     <<: *hardening
@@ -95,10 +118,10 @@ services:
     depends_on: [public-web]
 
 networks:
-  # cloudflared <-> public-web only. No internet access.
+  # cloudflared <-> public-web and admin-app. No internet access.
   edge:
     internal: true
-  # Outbound internet for the bundled cloudflared only.
+  # Outbound internet: the bundled cloudflared, and the admin app (Access signing keys).
   egress: {}
   # db, migrate, public-api, public-web. No internet access.
   backend:

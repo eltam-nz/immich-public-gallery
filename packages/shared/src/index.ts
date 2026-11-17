@@ -46,6 +46,14 @@ export interface PublicCollection {
   title: string;
   description: string | null;
   count: number;
+  /** Thumbnail URL of the cover photo, or null if the collection is empty. */
+  cover: string | null;
+}
+
+export interface CollectionRef {
+  id: string;
+  slug: string | null;
+  title: string;
 }
 
 export interface PublicPhoto {
@@ -73,7 +81,7 @@ export interface PublicPhoto {
   caption: string | null;
   tags: string[];
   featured: boolean;
-  collection: { id: string; slug: string | null; title: string } | null;
+  collections: CollectionRef[];
   custom: Record<string, unknown>;
   src: { thumb: string; preview: string };
 }
@@ -140,9 +148,7 @@ export interface PhotoRow {
   height: number;
   taken_at: string | null;
   meta: StoredMeta;
-  collection_id: string | null;
-  collection_slug: string | null;
-  collection_title: string | null;
+  collections: CollectionRef[] | null;
   caption: string | null;
   tags: string[] | null;
   featured: boolean | null;
@@ -171,7 +177,6 @@ export function toPublicPhoto(row: PhotoRow, defaultGpsPrecision: number): Publi
   if (m.iso !== undefined) exposure.iso = m.iso;
   if (m.focalLength !== undefined) exposure.focalLength = m.focalLength;
 
-  const base = `/img/${row.public_id}/${row.version}`;
   return {
     id: row.public_id,
     width: row.width,
@@ -185,10 +190,66 @@ export function toPublicPhoto(row: PhotoRow, defaultGpsPrecision: number): Publi
     caption: row.caption,
     tags: row.tags ?? [],
     featured: row.featured ?? false,
-    collection: row.collection_id
-      ? { id: row.collection_id, slug: row.collection_slug, title: row.collection_title ?? '' }
-      : null,
+    collections: row.collections ?? [],
     custom: row.custom ?? {},
-    src: { thumb: `${base}/thumb.webp`, preview: `${base}/preview.webp` },
+    src: { thumb: imageUrl(row.public_id, row.version, 'thumb'), preview: imageUrl(row.public_id, row.version, 'preview') },
   };
+}
+
+/** Image URL for a cached size. Shared by the public API and the admin app. */
+export function imageUrl(publicId: string, version: string, size: 'thumb' | 'preview'): string {
+  return `/img/${publicId}/${version}/${size}.webp`;
+}
+
+// ---- Admin app API types ----
+
+export interface AdminPhoto {
+  id: string;
+  width: number;
+  height: number;
+  takenAt: string | null;
+  camera: string | null;
+  lens: string | null;
+  /** Place names from Immich (always shown publicly when present). */
+  place: string | null;
+  /** Exact coordinates, admin-only. What is published depends on gpsPrecision. */
+  exactLocation: { lat: number; lon: number } | null;
+  description: string | null;
+  visible: boolean;
+  caption: string | null;
+  tags: string[];
+  featured: boolean;
+  sort: number | null;
+  /** null = site default. */
+  gpsPrecision: number | null;
+  collections: string[];
+  src: { thumb: string; preview: string };
+}
+
+export interface AdminCollection {
+  id: string;
+  slug: string | null;
+  title: string;
+  description: string | null;
+  visible: boolean;
+  sort: number;
+  count: number;
+  coverPhotoId: string | null;
+  cover: string | null;
+}
+
+export interface AdminStatus {
+  email: string;
+  lastSync: {
+    at: string;
+    ok: boolean;
+    assets: number;
+    imagesUpdated: number;
+    removed: number;
+    errors: string[];
+    immichVersion: string | null;
+  } | null;
+  counts: { photos: number; hidden: number; collections: number };
+  defaultGpsPrecision: number;
+  publicSiteUrl: string | null;
 }

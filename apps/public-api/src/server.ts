@@ -6,7 +6,7 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import rateLimit from '@fastify/rate-limit';
-import { toPublicPhoto, type PhotoRow, type PublicCollection, type SiteInfo } from '@showcase/shared';
+import { imageUrl, toPublicPhoto, type PhotoRow, type PublicCollection, type SiteInfo } from '@showcase/shared';
 import Fastify, { LogController, type FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
 import type { Sql } from './db.js';
@@ -15,24 +15,34 @@ import { imagePath, isSizeName } from './images.js';
 
 const COLLECTION_PARAM_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** Visible, fully-cached photos joined with admin overrides. */
-function photoQuery(sql: Sql, where: ReturnType<Sql>) {
+/**
+ * Visible, fully-cached photos joined with admin overrides and their visible
+ * collections. With `collectionId`, only that collection's photos, in the
+ * collection's own order.
+ */
+function photoQuery(sql: Sql, opts: { publicId?: string; collection?: string } = {}) {
+  const inCollection = opts.collection
+    ? sql`JOIN collection_photos fcp ON fcp.immich_asset_id = a.immich_asset_id
+          JOIN collections fc ON fc.id = fcp.collection_id AND fc.visible
+               AND (fc.public_id = ${opts.collection} OR fc.slug = ${opts.collection})`
+    : sql``;
   return sql<PhotoRow[]>`
     SELECT a.public_id, a.cached_version AS version, a.width, a.height,
            to_char(a.taken_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS taken_at,
            a.meta,
-           a.album_public_id AS collection_id,
-           c.slug AS collection_slug,
-           COALESCE(c.title, a.album_name) AS collection_title,
+           (SELECT COALESCE(json_agg(json_build_object('id', c.public_id, 'slug', c.slug, 'title', c.title)
+                                     ORDER BY c.sort, c.title), '[]'::json)
+              FROM collection_photos cp JOIN collections c ON c.id = cp.collection_id
+             WHERE cp.immich_asset_id = a.immich_asset_id AND c.visible) AS collections,
            pm.caption, pm.tags, pm.featured, pm.gps_precision, pm.custom
     FROM assets a
+    ${inCollection}
     LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
-    LEFT JOIN collections c ON c.immich_album_id = a.album_id
     WHERE a.cached_version IS NOT NULL
       AND COALESCE(pm.visible, true)
-      AND COALESCE(c.visible, true)
-      ${where}
-    ORDER BY pm.sort ASC NULLS LAST, a.taken_at DESC NULLS LAST, a.public_id`;
+      ${opts.publicId ? sql`AND a.public_id = ${opts.publicId}` : sql``}
+    ORDER BY ${opts.collection ? sql`fcp.sort ASC NULLS LAST,` : sql``}
+             pm.sort ASC NULLS LAST, a.taken_at DESC NULLS LAST, a.public_id`;
 }
 
 export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstance> {
@@ -75,31 +85,38 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
   app.get<{ Querystring: { collection?: string } }>('/api/photos', async (req, reply) => {
     const c = req.query.collection;
     if (c !== undefined && !COLLECTION_PARAM_RE.test(c)) return reply.code(400).send({ error: 'bad_request' });
-    const rows = await photoQuery(sql, c ? sql`AND (a.album_public_id = ${c} OR c.slug = ${c})` : sql``);
+    const rows = await photoQuery(sql, { collection: c });
     return rows.map((r) => toPublicPhoto(r, cfg.DEFAULT_GPS_PRECISION));
   });
 
   app.get<{ Params: { id: string } }>('/api/photos/:id', async (req, reply) => {
     if (!PUBLIC_ID_RE.test(req.params.id)) return reply.code(404).send({ error: 'not_found' });
-    const [row] = await photoQuery(sql, sql`AND a.public_id = ${req.params.id}`);
+    const [row] = await photoQuery(sql, { publicId: req.params.id });
     if (!row) return reply.code(404).send({ error: 'not_found' });
     return toPublicPhoto(row, cfg.DEFAULT_GPS_PRECISION);
   });
 
+  // Visible collections that contain at least one visible photo.
   app.get('/api/collections', async (): Promise<PublicCollection[]> => {
-    return sql<PublicCollection[]>`
-      SELECT a.album_public_id AS id, c.slug,
-             COALESCE(c.title, MAX(a.album_name)) AS title,
-             c.description, COUNT(*)::int AS count
-      FROM assets a
+    const rows = await sql<(Omit<PublicCollection, 'cover'> & { cover_id: string | null; cover_version: string | null })[]>`
+      SELECT c.public_id AS id, c.slug, c.title, c.description,
+             COUNT(a.public_id)::int AS count,
+             COALESCE(ca.public_id, (ARRAY_AGG(a.public_id ORDER BY cp.sort NULLS LAST, a.taken_at DESC))[1]) AS cover_id,
+             COALESCE(ca.cached_version, (ARRAY_AGG(a.cached_version ORDER BY cp.sort NULLS LAST, a.taken_at DESC))[1]) AS cover_version
+      FROM collections c
+      JOIN collection_photos cp ON cp.collection_id = c.id
+      JOIN assets a ON a.immich_asset_id = cp.immich_asset_id AND a.cached_version IS NOT NULL
       LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
-      LEFT JOIN collections c ON c.immich_album_id = a.album_id
-      WHERE a.album_public_id IS NOT NULL
-        AND a.cached_version IS NOT NULL
-        AND COALESCE(pm.visible, true)
-        AND COALESCE(c.visible, true)
-      GROUP BY a.album_public_id, c.slug, c.title, c.description, c.sort
-      ORDER BY COALESCE(c.sort, 0), title`;
+      -- Explicit cover, only if it is itself published and visible.
+      LEFT JOIN assets ca ON ca.immich_asset_id = c.cover_asset_id AND ca.cached_version IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM photos_meta cpm WHERE cpm.immich_asset_id = ca.immich_asset_id AND NOT cpm.visible)
+      WHERE c.visible AND COALESCE(pm.visible, true)
+      GROUP BY c.id, ca.public_id, ca.cached_version
+      ORDER BY c.sort, c.title`;
+    return rows.map(({ cover_id, cover_version, ...c }) => ({
+      ...c,
+      cover: cover_id && cover_version ? imageUrl(cover_id, cover_version, 'thumb') : null,
+    }));
   });
 
   // /img/<publicId>/<version>/<size>.webp — served only from the local cache.
@@ -115,9 +132,8 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
       const [row] = await sql`
         SELECT 1 FROM assets a
         LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
-        LEFT JOIN collections c ON c.immich_album_id = a.album_id
         WHERE a.public_id = ${id} AND a.cached_version = ${version}
-          AND COALESCE(pm.visible, true) AND COALESCE(c.visible, true)`;
+          AND COALESCE(pm.visible, true)`;
       if (!row) return reply.code(404).send({ error: 'not_found' });
 
       const path = imagePath(cfg.CACHE_DIR, id, version, size);

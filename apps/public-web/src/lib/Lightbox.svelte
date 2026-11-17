@@ -58,7 +58,10 @@
       {#if photo.camera}<dt>Camera</dt><dd>{photo.camera}</dd>{/if}
       {#if photo.lens}<dt>Lens</dt><dd>{photo.lens}</dd>{/if}
       {#if exposure.length}<dt>Settings</dt><dd>{exposure.join(' · ')}</dd>{/if}
-      {#if photo.collection}<dt>Collection</dt><dd>{photo.collection.title}</dd>{/if}
+      {#if photo.collections.length}
+        <dt>{photo.collections.length > 1 ? 'Collections' : 'Collection'}</dt>
+        <dd>{photo.collections.map((c) => c.title).join(', ')}</dd>
+      {/if}
     </dl>
     {#if photo.tags.length}
       <ul class="tags">{#each photo.tags as t}<li>{t}</li>{/each}</ul>
