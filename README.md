@@ -90,16 +90,36 @@ Everything the stack stores lives in bind mounts under `DATA_DIR` (default `/srv
 
 | Folder | Contents | Owner |
 |---|---|---|
-| `postgres/` | Database: sync state, and later your admin edits (captions, visibility, etc.) | uid 70 (Postgres in the container) |
-| `cache/` | Metadata-free WebP images; rebuilt automatically from Immich if deleted | uid 1000 (set by the one-shot `init-cache` service) |
+| `postgres/` | Database: sync state plus your admin edits (collections, captions, tags, visibility) | uid 70 (Postgres in the container) |
+| `cache/` | Metadata-free WebP images; rebuilt automatically from Immich if deleted | uid 1000 (set by the one-shot `init-dirs` service) |
+| `backups/` | Database backups (default location; see below) | uid 1000 |
 
-Back up `postgres/`; `cache/` can be skipped. Back it up with the stack stopped, or with `pg_dump` while it runs, since copying the files of a running database can give an inconsistent copy.
+#### Backups
+The `backup` service writes a verified `pg_dump` of the database every `BACKUP_INTERVAL_HOURS` (default 24) and keeps the newest `BACKUP_KEEP` (default 14). Each dump is checked with `pg_restore --list` before it counts. Files are named `showcase-<UTC date>-<time>.dump` and are owned by uid 1000. The first backup runs as soon as the stack starts. If backups stop working, the container shows **unhealthy** in Portainer.
+
+- **Where:** `BACKUP_DIR`, which defaults to `$DATA_DIR/backups`. Put it on a different drive from the database, e.g. `/mnt/hdd1-main/files/backups/immich-showcase`, so one failed disk can't take both. If Syncthing syncs that folder to another device, you also get an off-server copy.
+- **What to back up:** only the database. `cache/` rebuilds itself from Immich.
+- **Back up now:**
+  ```bash
+  docker exec immich-showcase-backup-1 backup.sh once
+  ```
+- **Restore** (replaces the current gallery database with the dump):
+  ```bash
+  docker stop immich-showcase-admin-app-1 immich-showcase-public-api-1
+  ```
+  ```bash
+  docker exec -i immich-showcase-db-1 pg_restore -U showcase_owner -d showcase --clean --if-exists < /path/to/showcase-YYYYMMDD-HHMMSS.dump
+  ```
+  ```bash
+  docker start immich-showcase-public-api-1 immich-showcase-admin-app-1
+  ```
+  The next sync brings photos up to date with Immich. Your collections, captions and settings come from the dump.
 
 **Moving from the old named volumes:** redeploy, then confirm the site shows photos. The first sync rebuilds everything, and `PUBLIC_ID_SECRET` keeps the URLs the same. Then remove the old `immich-showcase_db-data` and `immich-showcase_image-cache` volumes (Portainer → Volumes).
 
 **Troubleshooting an empty site.** Check the `public-api` logs. Each sync logs the Immich version and, for each link, how many publishable images it found. If Immich reports assets for a link but none could be read, the log says `Immich reports N assets but none were parsed`. That usually means an Immich API change, and the sync keeps the photos already published rather than emptying the site.
 
-To publish more albums, add their keys to `SHARED_LINK_KEYS` (comma-separated) and redeploy. The admin app will manage this later through the `shared_links` table.
+The gallery shares one Immich album through `SHARED_LINK_KEYS`. Several comma-separated keys also work.
 
 ## Development
 
@@ -143,6 +163,5 @@ test/              Mock Immich + end-to-end test
 - **Phase 3 (done):** admin app.
 - **Phase 4:** extra inputs (the `custom` fields).
 - **Phase 5:**
-  - Automated DB backups (`pg_dump` of `DATA_DIR/postgres`).
   - Prebuilt images on GHCR, so Portainer doesn't build on the server.
   - A pinned-version update policy.

@@ -12,6 +12,7 @@ export MOCK_IMMICH_MODE=${MOCK_IMMICH_MODE:-current}
 # Bind-mounted data goes to a throwaway folder, never /srv/docker.
 export DATA_DIR=$(mktemp -d "${TMPDIR:-/tmp}/showcase-e2e.XXXXXX")
 echo "mock Immich mode: $MOCK_IMMICH_MODE"
+export BACKUP_KEEP=2
 export SHARED_LINK_KEYS=test-shared-link-key SYNC_INTERVAL_MINUTES=60 SITE_TITLE="E2E Photos"
 DC="docker compose -f docker-compose.yml -f docker-compose.test.yml"
 
@@ -151,6 +152,46 @@ echo "$out" | grep -q "permission denied" || fail "admin role can write synced a
 out=$($DC exec -T -e PGPASSWORD="$PUBLIC_DB_PASSWORD" db psql -U showcase_public -d showcase -h 127.0.0.1 -c "DELETE FROM collections" 2>&1 || true)
 echo "$out" | grep -q "permission denied" || fail "public role can write collections: $out"
 pass "admin DB role cannot touch synced data; public role cannot touch collections"
+
+# ---------------- Backups ----------------
+BK="$DATA_DIR/backups"
+dumps() { ls -1t "$BK"/showcase-*.dump 2>/dev/null; }
+for i in $(seq 1 30); do [ -n "$(dumps)" ] && break; sleep 1; done
+[ -n "$(dumps)" ] || fail "no automatic backup at startup: $($DC logs backup | tail -5)"
+$DC exec -T backup backup.sh once >/dev/null || fail "backup.sh once"
+sleep 1
+$DC exec -T backup backup.sh once >/dev/null || fail "backup.sh once (2)"
+[ "$(dumps | wc -l)" = 2 ] || fail "retention: expected 2 dumps with BACKUP_KEEP=2, got: $(dumps)"
+[ "$(stat -c %u "$BK" "$(dumps | head -1)" | sort -u)" = 1000 ] || fail "backups not owned by uid 1000"
+$DC exec -T backup pg_restore --list "/backups/$(basename "$(dumps | head -1)")" | grep -q "TABLE DATA public collections" || fail "dump missing collections data"
+$DC exec -T backup backup.sh check || fail "backup healthcheck"
+ls "$BK" | grep -q '\.tmp$' && fail "temp file left behind"
+pass "backups: automatic + on demand, verified, pruned to BACKUP_KEEP, owned by uid 1000"
+
+# Restore round-trip: back up, change things, restore, check they're back.
+CB=$(curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d '{"title":"Backup test","slug":"backup-test"}' $ADMIN/api/collections | jq_ 'd.id')
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P3\"],\"addTo\":\"$CB\"}" $ADMIN/api/photos/bulk >/dev/null
+curl -fsS -X PATCH "${AUTH[@]}" "${W[@]}" -d '{"caption":"Before backup"}' $ADMIN/api/photos/$P3 >/dev/null
+$DC exec -T backup backup.sh once >/dev/null || fail "backup before restore"
+DUMP=$(dumps | head -1)
+curl -fsS -X DELETE "${AUTH[@]}" -H "x-showcase-admin: 1" $ADMIN/api/collections/$CB >/dev/null
+curl -fsS -X PATCH "${AUTH[@]}" "${W[@]}" -d '{"caption":"After backup"}' $ADMIN/api/photos/$P3 >/dev/null
+curl -fsS $WEB/api/collections | grep -q backup-test && fail "collection not deleted before restore"
+$DC stop admin-app public-api >/dev/null 2>&1
+$DC exec -T db pg_restore -U showcase_owner -d showcase --clean --if-exists < "$DUMP" || fail "pg_restore"
+$DC start public-api admin-app >/dev/null 2>&1
+for i in $(seq 1 30); do curl -fsS $WEB/api/collections 2>/dev/null | grep -q backup-test && break; sleep 1; done
+curl -fsS $WEB/api/collections | grep -q '"slug":"backup-test"' || fail "collection not restored: api=$(curl -sS $WEB/api/collections) db=$($DC exec -T db psql -U showcase_owner -d showcase -tAc "select (select count(*) from collections where slug='backup-test'), (select count(*) from collection_photos), (select count(*) from assets where cached_version is not null)") restore-log=$($DC logs --since 2m public-api 2>&1 | grep -E 'sync|error' | tail -3)"
+curl -fsS $WEB/api/photos/$P3 | grep -q '"caption":"Before backup"' || fail "caption not restored"
+for i in $(seq 1 30); do [ "$(code "${AUTH[@]}" $ADMIN/api/status)" = 200 ] && break; sleep 1; done
+[ "$(code "${AUTH[@]}" $ADMIN/api/status)" = 200 ] || fail "admin not working after restore"
+pass "restore from backup brings back collections and captions"
+
+# public-api recreated (new container, possibly new IP): nginx must still reach it.
+$DC up -d --no-build --no-deps --force-recreate public-api >/dev/null 2>&1
+for i in $(seq 1 30); do [ "$(count)" -ge 1 ] && break; sleep 1; done
+[ "$(count)" -ge 1 ] || fail "public site broken after public-api was recreated"
+pass "public site keeps working when public-api is recreated"
 
 if [ "$MOCK_IMMICH_MODE" = current ]; then
   echo "$calls" | grep -q '/api/timeline/bucket' || fail "current mode did not use the timeline API"

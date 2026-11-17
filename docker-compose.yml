@@ -31,16 +31,17 @@ services:
       retries: 20
 
   # One-shot: creates the least-privilege role and applies migrations, then exits.
-  # One-shot: makes the image-cache folder writable by public-api (uid 1000).
-  # Docker creates missing bind-mount folders as root, which public-api can't write to.
-  init-cache:
+  # One-shot: makes the cache and backup folders writable by uid 1000 (public-api,
+  # backup). Docker creates missing bind-mount folders as root.
+  init-dirs:
     image: postgres:16-alpine  # reused only for its shell; already pulled for db
     restart: "no"
     user: root
     network_mode: none
-    entrypoint: ["sh", "-c", "chown 1000:1000 /cache && chmod 755 /cache"]
+    entrypoint: ["sh", "-c", "chown 1000:1000 /cache /backups && chmod 755 /cache /backups"]
     volumes:
       - ${DATA_DIR:-/srv/docker/immich-showcase}/cache:/cache
+      - ${BACKUP_DIR:-${DATA_DIR:-/srv/docker/immich-showcase}/backups}:/backups
 
   migrate:
     build: { context: ., dockerfile: db/Dockerfile }
@@ -74,7 +75,7 @@ services:
     networks: [backend, immich]
     depends_on:
       migrate: { condition: service_completed_successfully }
-      init-cache: { condition: service_completed_successfully }
+      init-dirs: { condition: service_completed_successfully }
 
   public-web:
     <<: *hardening
@@ -82,6 +83,33 @@ services:
     tmpfs: [/tmp]
     networks: [edge, backend]
     depends_on: [public-api]
+
+  # Database backups: a verified pg_dump every BACKUP_INTERVAL_HOURS, keeping the
+  # newest BACKUP_KEEP. Make one now: docker exec <container> backup.sh once
+  backup:
+    <<: *hardening
+    build: { context: ., dockerfile: db/Dockerfile }
+    entrypoint: ["/usr/local/bin/backup.sh"]
+    user: "1000:1000"
+    environment:
+      PGHOST: db
+      PGDATABASE: showcase
+      PGUSER: showcase_owner
+      PGPASSWORD: ${DB_OWNER_PASSWORD:?set DB_OWNER_PASSWORD}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+    volumes:
+      - ${BACKUP_DIR:-${DATA_DIR:-/srv/docker/immich-showcase}/backups}:/backups
+    tmpfs: [/tmp]
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/backup.sh", "check"]
+      interval: 5m
+      timeout: 10s
+      start_period: 10m
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      init-dirs: { condition: service_completed_successfully }
 
   # Private admin app. Requires Cloudflare Access in front of its hostname, and
   # verifies the Access token itself: without CF_ACCESS_* and ADMIN_EMAILS it
