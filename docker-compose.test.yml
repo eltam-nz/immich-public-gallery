@@ -3,6 +3,8 @@ services:
   mock-immich:
     image: node:22-alpine
     command: node /mock/server.mjs
+    environment:
+      MOCK_IMMICH_MODE: ${MOCK_IMMICH_MODE:-current}
     volumes: ["./test/mock-immich:/mock:ro"]
     networks: [immich]
     ports: ["127.0.0.1:2283:2283"]

@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # End-to-end test: real stack + mock Immich. Requires Docker and `pnpm install`.
+# MOCK_IMMICH_MODE=current (default) mimics current Immich (album assets via the
+# timeline API); MOCK_IMMICH_MODE=legacy mimics older Immich (assets in the album).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export COMPOSE_PROJECT_NAME=immich-showcase
 export DB_OWNER_PASSWORD=owner-test-pw PUBLIC_DB_PASSWORD=public-test-pw
 export PUBLIC_ID_SECRET=test-secret-test-secret-test-secret-123
 export IMMICH_NETWORK=showcase_test_immich
+export MOCK_IMMICH_MODE=${MOCK_IMMICH_MODE:-current}
+echo "mock Immich mode: $MOCK_IMMICH_MODE"
 export SHARED_LINK_KEYS=test-shared-link-key SYNC_INTERVAL_MINUTES=60 SITE_TITLE="E2E Photos"
 DC="docker compose -f docker-compose.yml -f docker-compose.test.yml"
 
@@ -60,17 +64,44 @@ pass "read-only, no traversal, no passthrough to Immich"
 calls=$(curl -fsS http://127.0.0.1:2283/__control/requests)
 echo "$calls" | node -e '
 let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
-  const ok=[/^GET \/api\/shared-links\/me$/,/^GET \/api\/albums\/[0-9a-f-]{36}$/,/^GET \/api\/assets\/[0-9a-f-]{36}\/thumbnail\?size=preview$/];
+  const ok=[/^GET \/api\/shared-links\/me$/,/^GET \/api\/albums\/[0-9a-f-]{36}$/,/^GET \/api\/assets\/[0-9a-f-]{36}\/thumbnail\?size=preview$/,
+    /^GET \/api\/timeline\/buckets$/,/^GET \/api\/timeline\/bucket$/,/^GET \/api\/assets\/[0-9a-f-]{36}$/,/^GET \/api\/server\/version$/];
   const bad=JSON.parse(s).filter(r=>!ok.some(re=>re.test(r)));
   if(bad.length){console.error("unexpected Immich calls:",bad);process.exit(1)}})' || fail "public-api called non-allowlisted Immich endpoints"
 pass "public-api only called allowlisted Immich endpoints"
 
+if [ "$MOCK_IMMICH_MODE" = current ]; then
+  echo "$calls" | grep -q '/api/timeline/bucket' || fail "current mode did not use the timeline API"
+  pass "current Immich: album listed via timeline API"
+  # One asset's detail returns 404 -> only that asset is dropped, the site is not wiped.
+  curl -fsS http://127.0.0.1:2283/__control/detail-404 >/dev/null
+  $DC restart public-api >/dev/null
+  for i in $(seq 1 30); do n=$(count); [ "$n" = 2 ] && break; sleep 1; done
+  [ "$n" = 2 ] || fail "expected 2 photos after one asset 404s, got $n"
+  pass "a single unavailable asset is dropped without unpublishing the album"
+  expect_after_remove=1
+else
+  echo "$calls" | grep -q '/api/timeline/' && fail "legacy mode should not need the timeline API"
+  pass "legacy Immich: assets read from the album response"
+  expect_after_remove=2
+fi
+
 # Photo removed from the album -> disappears after re-sync.
 curl -fsS http://127.0.0.1:2283/__control/remove-one >/dev/null
 $DC restart public-api >/dev/null
-for i in $(seq 1 30); do n=$(count); [ "$n" = 2 ] && break; sleep 1; done
-[ "$n" = 2 ] || fail "removed photo still published ($n)"
+for i in $(seq 1 30); do n=$(count); [ "$n" = "$expect_after_remove" ] && break; sleep 1; done
+[ "$n" = "$expect_after_remove" ] || fail "removed photo still published ($n)"
 pass "photo removed from Immich album is unpublished"
+
+if [ "$MOCK_IMMICH_MODE" = current ]; then
+  # Immich reports assets but none can be parsed -> warn, and keep what is published.
+  curl -fsS http://127.0.0.1:2283/__control/break-timeline >/dev/null
+  $DC restart public-api >/dev/null
+  for i in $(seq 1 30); do $DC logs public-api 2>/dev/null | grep -q "none were parsed" && break; sleep 1; done
+  $DC logs public-api 2>/dev/null | grep -q "none were parsed" || fail "no warning when Immich reports assets but none parse"
+  [ "$(count)" = "$expect_after_remove" ] || fail "site was wiped after a parse failure"
+  pass "parse failure warns and keeps published photos"
+fi
 
 # Link revoked -> site empties.
 curl -fsS http://127.0.0.1:2283/__control/revoke >/dev/null

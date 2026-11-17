@@ -10,6 +10,7 @@ import type { Sql } from './db.js';
 import { assetVersion, publicId } from './ids.js';
 import { removeImages, writeImages } from './images.js';
 import { ImmichClient, LinkRevokedError, type ImmichAsset } from './immich.js';
+import { mapLimit } from './util.js';
 
 interface Seen {
   asset: ImmichAsset;
@@ -24,14 +25,6 @@ export interface SyncResult {
   imagesUpdated: number;
   removed: number;
   errors: string[];
-}
-
-async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  let i = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (i < items.length) await fn(items[i++]!);
-  });
-  await Promise.all(workers);
 }
 
 export class Syncer {
@@ -63,6 +56,9 @@ export class Syncer {
     const seen = new Map<string, Seen>();
     let transientFailure = false;
 
+    const immichVersion = await this.immich.getServerVersion();
+    this.log.info({ immichVersion }, 'sync starting');
+
     const keys = await this.linkKeys();
     for (const [idx, key] of keys.entries()) {
       const label = `link #${idx + 1}`; // never log the key itself
@@ -70,6 +66,22 @@ export class Syncer {
         const contents = await this.immich.getLinkContents(key);
         if (!contents.showMetadata) {
           this.log.warn(`${label}: "Show metadata" is off in Immich, so EXIF features will be empty`);
+        }
+        const parsed = contents.assets.length;
+        const expected = contents.expectedCount;
+        if (expected !== null && expected > 0 && parsed === 0) {
+          // Immich has photos for this link but we parsed none: almost certainly an
+          // API change. Surface it instead of silently publishing an empty site.
+          const msg = `${label}: Immich reports ${expected} assets but none were parsed (via ${contents.source}, Immich ${immichVersion ?? 'unknown'}); check Immich version compatibility`;
+          this.log.warn(msg);
+          errors.push(msg);
+          transientFailure = true; // keep already-published photos rather than wiping the site
+        } else {
+          this.log.info(
+            { link: label, source: contents.source, expected, images: parsed },
+            `${label}: ${parsed} publishable images` +
+              (expected !== null && expected > parsed ? ` (${expected - parsed} videos/hidden/unavailable skipped)` : ''),
+          );
         }
         for (const asset of contents.assets) {
           if (!seen.has(asset.id)) seen.set(asset.id, { asset, key, album: contents.album });
@@ -161,8 +173,9 @@ export class Syncer {
       removed,
       errors: errors.slice(0, 20),
     };
+    const state = { ...result, immichVersion, at: new Date().toISOString() };
     await this.sql`
-      INSERT INTO sync_state (key, value) VALUES ('last_sync', ${this.sql.json({ ...result, at: new Date().toISOString() } as never)})
+      INSERT INTO sync_state (key, value) VALUES ('last_sync', ${this.sql.json(state as never)})
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`;
     this.log.info({ ...result, ms: Date.now() - started }, 'sync complete');
     return result;

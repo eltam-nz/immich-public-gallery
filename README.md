@@ -17,7 +17,7 @@ It uses the same access model as Immich Public Proxy, with a few things tightene
 | IDs in URLs | Immich UUIDs | Opaque HMAC-derived IDs |
 
 Other guarantees:
-- **Fixed Immich calls only.** public-api only ever calls `shared-links/me`, `albums/:id` and `assets/:id/thumbnail`. The e2e test checks this.
+- **Fixed Immich calls only.** public-api only ever calls `shared-links/me`, `albums/:id`, `timeline/buckets` and `timeline/bucket` (to list an album's assets on current Immich), `assets/:id` (date and EXIF), `assets/:id/thumbnail`, and the public `server/version` (logged for diagnostics). All of them use the shared-link key, never an API key. The e2e test checks this list against both current and older Immich API shapes.
 - **Metadata allowlist.** Everything sent to the public API passes through `toPublicPhoto` in `packages/shared/src/index.ts`. Fields not copied there can't leak.
 - **GPS hidden by default.** `DEFAULT_GPS_PRECISION=-1` hides coordinates. City, state and country are still shown. You can override this per photo (`photos_meta.gps_precision`).
 - **Least-privilege database.** The public role can read the admin tables but not write them.
@@ -65,6 +65,8 @@ Shared tunnel: your existing cloudflared ─(TUNNEL_NETWORK)→ public-web (alia
 2. Add the variables from `.env.example` for your tunnel mode. Generate secrets with `openssl rand -hex 32` (hex, because `PUBLIC_DB_PASSWORD` goes into a connection URL where base64's `/` and `+` break it).
 3. Set `IMMICH_NETWORK` to your Immich stack's network (run `docker network ls`; it's usually `immich_default`). Set `IMMICH_URL` to `http://immich_server:2283`.
 4. Deploy. Portainer builds the images on the server. The first sync runs at startup and then every `SYNC_INTERVAL_MINUTES`.
+
+**Troubleshooting an empty site.** Check the `public-api` logs. Each sync logs the Immich version and, for each link, how many publishable images it found. If Immich reports assets for a link but none could be read, the log says `Immich reports N assets but none were parsed`. That usually means an Immich API change, and the sync keeps the photos already published rather than emptying the site.
 
 To publish more albums, add their keys to `SHARED_LINK_KEYS` (comma-separated) and redeploy. The admin app will manage this later through the `shared_links` table.
 
