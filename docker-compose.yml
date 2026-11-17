@@ -22,7 +22,7 @@ services:
       POSTGRES_USER: showcase_owner
       POSTGRES_PASSWORD: ${DB_OWNER_PASSWORD:?set DB_OWNER_PASSWORD}
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - ${DATA_DIR:-/srv/docker/immich-showcase}/postgres:/var/lib/postgresql/data
     networks: [backend]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U showcase_owner -d showcase"]
@@ -31,6 +31,17 @@ services:
       retries: 20
 
   # One-shot: creates the least-privilege role and applies migrations, then exits.
+  # One-shot: makes the image-cache folder writable by public-api (uid 1000).
+  # Docker creates missing bind-mount folders as root, which public-api can't write to.
+  init-cache:
+    image: postgres:16-alpine  # reused only for its shell; already pulled for db
+    restart: "no"
+    user: root
+    network_mode: none
+    entrypoint: ["sh", "-c", "chown 1000:1000 /cache && chmod 755 /cache"]
+    volumes:
+      - ${DATA_DIR:-/srv/docker/immich-showcase}/cache:/cache
+
   migrate:
     build: { context: ., dockerfile: db/Dockerfile }
     restart: "no"
@@ -57,11 +68,12 @@ services:
       SITE_TITLE: ${SITE_TITLE:-Photos}
       CACHE_DIR: /cache
     volumes:
-      - image-cache:/cache
+      - ${DATA_DIR:-/srv/docker/immich-showcase}/cache:/cache
     tmpfs: [/tmp]
     networks: [backend, immich]
     depends_on:
       migrate: { condition: service_completed_successfully }
+      init-cache: { condition: service_completed_successfully }
 
   public-web:
     <<: *hardening
@@ -95,7 +107,3 @@ networks:
   immich:
     external: true
     name: ${IMMICH_NETWORK:-immich_default}
-
-volumes:
-  db-data:
-  image-cache:

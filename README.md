@@ -66,6 +66,18 @@ Shared tunnel: your existing cloudflared ─(TUNNEL_NETWORK)→ public-web (alia
 3. Set `IMMICH_NETWORK` to your Immich stack's network (run `docker network ls`; it's usually `immich_default`). Set `IMMICH_URL` to `http://immich_server:2283`.
 4. Deploy. Portainer builds the images on the server. The first sync runs at startup and then every `SYNC_INTERVAL_MINUTES`.
 
+### Data and backups
+Everything the stack stores lives in bind mounts under `DATA_DIR` (default `/srv/docker/immich-showcase`). Docker creates the folders on first deploy.
+
+| Folder | Contents | Owner |
+|---|---|---|
+| `postgres/` | Database: sync state, and later your admin edits (captions, visibility, etc.) | uid 70 (Postgres in the container) |
+| `cache/` | Metadata-free WebP images; rebuilt automatically from Immich if deleted | uid 1000 (set by the one-shot `init-cache` service) |
+
+Back up `postgres/`; `cache/` can be skipped. Back it up with the stack stopped, or with `pg_dump` while it runs, since copying the files of a running database can give an inconsistent copy.
+
+**Moving from the old named volumes:** redeploy, then confirm the site shows photos. The first sync rebuilds everything, and `PUBLIC_ID_SECRET` keeps the URLs the same. Then remove the old `immich-showcase_db-data` and `immich-showcase_image-cache` volumes (Portainer → Volumes).
+
 **Troubleshooting an empty site.** Check the `public-api` logs. Each sync logs the Immich version and, for each link, how many publishable images it found. If Immich reports assets for a link but none could be read, the log says `Immich reports N assets but none were parsed`. That usually means an Immich API change, and the sync keeps the photos already published rather than emptying the site.
 
 To publish more albums, add their keys to `SHARED_LINK_KEYS` (comma-separated) and redeploy. The admin app will manage this later through the `shared_links` table.
@@ -114,6 +126,6 @@ test/              Mock Immich + end-to-end test
   - a "sync now" button
 - **Phase 4:** extra inputs (the `custom` fields).
 - **Phase 5:**
-  - DB backups.
+  - Automated DB backups (`pg_dump` of `DATA_DIR/postgres`).
   - Prebuilt images on GHCR, so Portainer doesn't build on the server.
   - A pinned-version update policy.

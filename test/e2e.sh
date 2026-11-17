@@ -9,6 +9,8 @@ export DB_OWNER_PASSWORD=owner-test-pw PUBLIC_DB_PASSWORD=public-test-pw
 export PUBLIC_ID_SECRET=test-secret-test-secret-test-secret-123
 export IMMICH_NETWORK=showcase_test_immich
 export MOCK_IMMICH_MODE=${MOCK_IMMICH_MODE:-current}
+# Bind-mounted data goes to a throwaway folder, never /srv/docker.
+export DATA_DIR=$(mktemp -d "${TMPDIR:-/tmp}/showcase-e2e.XXXXXX")
 echo "mock Immich mode: $MOCK_IMMICH_MODE"
 export SHARED_LINK_KEYS=test-shared-link-key SYNC_INTERVAL_MINUTES=60 SITE_TITLE="E2E Photos"
 DC="docker compose -f docker-compose.yml -f docker-compose.test.yml"
@@ -17,7 +19,14 @@ node test/mock-immich/make-fixtures.mjs >/dev/null
 docker network inspect "$IMMICH_NETWORK" >/dev/null 2>&1 || docker network create "$IMMICH_NETWORK" >/dev/null
 $DC down -v --remove-orphans >/dev/null 2>&1 || true
 $DC up -d ${E2E_NO_BUILD:+--no-build}
-trap '[ "${KEEP:-}" ] || $DC down -v >/dev/null 2>&1' EXIT
+cleanup() {
+  [ "${KEEP:-}" ] && { echo "kept stack; data in $DATA_DIR"; return; }
+  $DC down -v >/dev/null 2>&1
+  # Files are owned by container users (postgres, node), so remove them from a container.
+  docker run --rm -v "$DATA_DIR:/d" postgres:16-alpine sh -c 'rm -rf /d/* /d/.[!.]*' >/dev/null 2>&1
+  rmdir "$DATA_DIR" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 WEB=http://127.0.0.1:8088
 fail() { echo "FAIL: $*"; $DC logs public-api | tail -30; exit 1; }
@@ -30,6 +39,12 @@ for i in $(seq 1 60); do
 done
 [ "$n" = 3 ] || fail "expected 3 photos (videos excluded), got $n"
 pass "sync: 3 images published, video skipped"
+
+# Data lives in bind mounts under DATA_DIR (stat works without read access to the folders).
+[ "$(stat -c %u "$DATA_DIR/postgres")" = 70 ] || fail "postgres data not in $DATA_DIR/postgres"
+[ "$(stat -c %u "$DATA_DIR/cache")" = 1000 ] || fail "cache folder not owned by uid 1000"
+[ -n "$(ls -A "$DATA_DIR/cache")" ] || fail "image cache not written to $DATA_DIR/cache"
+pass "database and image cache live in bind mounts under DATA_DIR"
 
 body=$(curl -fsS $WEB/api/photos)
 echo "$body" | grep -qiE 'immich|SHOULD-NOT-LEAK|serial|fileSize|test-shared-link-key|aaaaaaaa-' && fail "internal data leaked: $body"
