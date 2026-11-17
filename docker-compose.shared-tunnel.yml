@@ -1,0 +1,20 @@
+# Shared-tunnel mode: run without the bundled cloudflared and let an existing
+# cloudflared container reach public-web over its Docker network.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.shared-tunnel.yml up -d
+#   (Portainer: add this file under "Additional paths")
+#
+# Route the tunnel hostname to http://immich-showcase-web:8080
+# Note: this weakens isolation. See "How it stays secure" in the README.
+services:
+  public-web:
+    networks:
+      edge: {}
+      backend: {}
+      tunnel:
+        aliases: [immich-showcase-web]
+
+networks:
+  tunnel:
+    external: true
+    name: ${TUNNEL_NETWORK:-proxy}

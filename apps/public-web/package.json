@@ -1,0 +1,21 @@
+{
+  "name": "@showcase/public-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "echo \"no tests\""
+  },
+  "devDependencies": {
+    "@showcase/shared": "workspace:*",
+    "@sveltejs/vite-plugin-svelte": "^5.1.0",
+    "@tsconfig/svelte": "^5.0.4",
+    "svelte": "^5.35.0",
+    "svelte-check": "^4.2.2",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5"
+  }
+}

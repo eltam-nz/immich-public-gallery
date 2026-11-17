@@ -1,0 +1,109 @@
+# Portainer stack: Stacks → Add stack → Repository (compose path: docker-compose.yml),
+# then set the variables from .env.example under "Environment variables".
+#
+# Tunnel modes (see README):
+#   - Bundled tunnel: set COMPOSE_PROFILES=bundled-tunnel and TUNNEL_TOKEN.
+#   - Shared tunnel:  add docker-compose.shared-tunnel.yml as an additional compose file
+#                     and set TUNNEL_NETWORK; leave COMPOSE_PROFILES and TUNNEL_TOKEN unset.
+name: immich-showcase
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: showcase
+      POSTGRES_USER: showcase_owner
+      POSTGRES_PASSWORD: ${DB_OWNER_PASSWORD:?set DB_OWNER_PASSWORD}
+    volumes:
+      - ${DATA_DIR:-/srv/docker/immich-showcase}/postgres:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U showcase_owner -d showcase"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot: creates the least-privilege role and applies migrations, then exits.
+  # One-shot: makes the image-cache folder writable by public-api (uid 1000).
+  # Docker creates missing bind-mount folders as root, which public-api can't write to.
+  init-cache:
+    image: postgres:16-alpine  # reused only for its shell; already pulled for db
+    restart: "no"
+    user: root
+    network_mode: none
+    entrypoint: ["sh", "-c", "chown 1000:1000 /cache && chmod 755 /cache"]
+    volumes:
+      - ${DATA_DIR:-/srv/docker/immich-showcase}/cache:/cache
+
+  migrate:
+    build: { context: ., dockerfile: db/Dockerfile }
+    restart: "no"
+    environment:
+      PGHOST: db
+      PGDATABASE: showcase
+      PGUSER: showcase_owner
+      PGPASSWORD: ${DB_OWNER_PASSWORD:?set DB_OWNER_PASSWORD}
+      PUBLIC_DB_PASSWORD: ${PUBLIC_DB_PASSWORD:?set PUBLIC_DB_PASSWORD}
+    networks: [backend]
+    depends_on:
+      db: { condition: service_healthy }
+
+  public-api:
+    <<: *hardening
+    build: { context: ., dockerfile: apps/public-api/Dockerfile }
+    environment:
+      DATABASE_URL: postgres://showcase_public:${PUBLIC_DB_PASSWORD}@db:5432/showcase
+      IMMICH_URL: ${IMMICH_URL:-http://immich_server:2283}
+      SHARED_LINK_KEYS: ${SHARED_LINK_KEYS:-}
+      PUBLIC_ID_SECRET: ${PUBLIC_ID_SECRET:?set PUBLIC_ID_SECRET}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
+      DEFAULT_GPS_PRECISION: ${DEFAULT_GPS_PRECISION:--1}
+      SITE_TITLE: ${SITE_TITLE:-Photos}
+      CACHE_DIR: /cache
+    volumes:
+      - ${DATA_DIR:-/srv/docker/immich-showcase}/cache:/cache
+    tmpfs: [/tmp]
+    networks: [backend, immich]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      init-cache: { condition: service_completed_successfully }
+
+  public-web:
+    <<: *hardening
+    build: { context: ., dockerfile: apps/public-web/Dockerfile }
+    tmpfs: [/tmp]
+    networks: [edge, backend]
+    depends_on: [public-api]
+
+  # Bundled tunnel. Only starts with COMPOSE_PROFILES=bundled-tunnel.
+  cloudflared:
+    <<: *hardening
+    profiles: [bundled-tunnel]
+    image: cloudflare/cloudflared:2025.4.0
+    command: tunnel --no-autoupdate run
+    environment:
+      # Not ":?" because Compose validates required variables even for inactive profiles.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    networks: [edge, egress]
+    depends_on: [public-web]
+
+networks:
+  # cloudflared <-> public-web only. No internet access.
+  edge:
+    internal: true
+  # Outbound internet for the bundled cloudflared only.
+  egress: {}
+  # db, migrate, public-api, public-web. No internet access.
+  backend:
+    internal: true
+  # Your existing Immich stack's network, so public-api can reach immich_server.
+  immich:
+    external: true
+    name: ${IMMICH_NETWORK:-immich_default}
