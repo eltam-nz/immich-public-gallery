@@ -95,6 +95,12 @@ In the admin app:
 - **Collections:** sub-albums inside the gallery. A photo can be in several. Each has a title, an optional URL name (`/?c=<name>`), a description, visibility, order and a cover photo.
 - **Sync:** last sync result, Immich version, and **Sync now**.
 
+**On a phone** the admin app has bottom tabs (Photos, Collections, Sync).
+- **Select several photos:** tap **Select**, tap the photos, then **Actions** for show/hide, collections and location.
+- **Edit photos one after another:** in the editor, use **‹ ›** (or swipe on the photo) and **Save & next**. The phone's **Back** button closes the editor.
+- **Reorder collections:** use the **↑ ↓** buttons.
+- **On desktop:** Ctrl/⌘-click or Shift-click to select, and **J** / **K** for the previous / next photo and **Ctrl+S** to save in the editor.
+
 If the admin container keeps restarting, check its logs. It refuses to start with a clear message when an Access setting is missing.
 
 ### Data and backups

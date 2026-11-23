@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AdminStatus } from '@showcase/shared';
   import { api } from './api';
+  import { media } from './state.svelte';
 
   let { status, onchange }: { status: AdminStatus; onchange: () => Promise<void> } = $props();
 
@@ -66,6 +67,10 @@
   </div>
 </section>
 
+{#if media.phone}
+  <p class="who muted">Signed in as {status.email}{#if status.publicSiteUrl} · <a href={status.publicSiteUrl} target="_blank" rel="noopener noreferrer">View site ↗</a>{/if}</p>
+{/if}
+
 <style>
   section { max-width: 720px; }
   .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
@@ -78,5 +83,14 @@
   dd { margin: 0; }
   .ok { color: var(--ok); }
   .errors { color: var(--danger); font-size: 13px; padding-left: 18px; }
-  .row { display: flex; gap: 12px; align-items: center; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .who { margin-top: 32px; font-size: 13px; }
+  .who a { color: inherit; }
+  @media (max-width: 700px) {
+    .cards { gap: 8px; }
+    .card { padding: 10px; }
+    .n { font-size: 22px; }
+    .row .btn { width: 100%; }
+    dl { grid-template-columns: 1fr auto; }
+  }
 </style>
