@@ -2,7 +2,14 @@
 
 A self-hosted public photo site built from selected Immich albums. It runs as a Portainer stack and is published through a Cloudflare Tunnel. Immich itself is never exposed.
 
-**Status:** Phase 1 (foundation) and Phase 3 (admin app) are done. One Immich album is shared through a link key. Everything else is managed inside the gallery, from a private admin app: sub-album collections, captions, tags, visibility and location precision.
+**Status:** foundation, admin app, backups and the visitor-facing site are done. One Immich album is shared through a link key. Everything else is managed inside the gallery, from a private admin app: albums (sub-album collections), captions, tags, highlights, visibility and each photo's place.
+
+**The public site** is built for phones and older visitors: large text, high contrast, big labelled buttons and simple navigation (Home, albums, All photos, Map).
+- **Home page:** highlights (featured photos) and album cards.
+- **Map:** photos grouped by town or city, plus a plain list of places.
+- **Photo viewer:** large Previous / Close / Next buttons and swipe support.
+
+Every page has its own URL, so the browser's Back button always works.
 
 ## How it stays secure
 
@@ -19,7 +26,7 @@ It uses the same access model as Immich Public Proxy, with a few things tightene
 Other guarantees:
 - **Fixed Immich calls only.** public-api only ever calls `shared-links/me`, `albums/:id`, `timeline/buckets` and `timeline/bucket` (to list an album's assets on current Immich), `assets/:id` (date and EXIF), `assets/:id/thumbnail`, and the public `server/version` (logged for diagnostics). All of them use the shared-link key, never an API key. The e2e test checks this list against both current and older Immich API shapes.
 - **Metadata allowlist.** Everything sent to the public API passes through `toPublicPhoto` in `packages/shared/src/index.ts`. Fields not copied there can't leak.
-- **GPS hidden by default.** `DEFAULT_GPS_PRECISION=-1` hides coordinates. City, state and country are still shown. You can override this per photo (`photos_meta.gps_precision`).
+- **Only the town or city is published.** Photo GPS is snapped to the nearest city with an offline GeoNames gazetteer, and only that city's name and its own map position are published, never a photo's coordinates. Per photo, the admin app can choose another place or hide the location.
 - **Least-privilege database.** The public role can read the admin tables but not write them. The admin role can edit the admin tables (photo overrides, collections) but can only read synced data.
 - **Admin app behind two locks.** Cloudflare Access must let you in, and the app then verifies Access's signed token itself (issuer, audience, expiry, signature) and checks your email against `ADMIN_EMAILS`. A request that reaches the container any other way is rejected. Without these settings the app refuses to start. Changes also need a custom request header and a same-origin request, which blocks cross-site request forgery.
 - **The admin app never talks to Immich.** It has no Immich key and no route to Immich. "Sync now" is a database notification that the public API acts on.
@@ -79,7 +86,11 @@ Shared tunnel: your existing cloudflared ─(TUNNEL_NETWORK)→ public-web (alia
    Create the Access application **before** the route. If the route goes live first, the app still rejects everyone, because no valid Access token exists yet.
 
 In the admin app:
-- **Photos:** show or hide photos, feature them, and edit captions, tags, sort order and how precisely the location is published. Bulk-select to hide, show or feature photos, or add them to (or remove them from) a collection.
+- **Photos:** show or hide photos, feature them (they appear under Highlights), and edit captions, tags and sort order. Bulk-select to hide, show or feature photos, or add them to (or remove them from) a collection.
+- **Location:** each photo shows its town or city, worked out from its GPS. You can choose another place (search any town or city, or pick one already in the gallery), switch back to GPS, or hide the location.
+  - **Copy a place to other photos:** tick the photos that need it, open a photo that already has the right place, and click **Apply \<place\> to N selected photos**.
+  - **Find photos without a place:** use the **No location** filter.
+  - **Bulk:** the bulk bar's **Set location…** does the same for all ticked photos at once.
 - **Collections:** sub-albums inside the gallery. A photo can be in several. Each has a title, an optional URL name (`/?c=<name>`), a description, visibility, order and a cover photo.
 - **Sync:** last sync result, Immich version, and **Sync now**.
 
@@ -121,6 +132,10 @@ The `backup` service writes a verified `pg_dump` of the database every `BACKUP_I
 
 The gallery shares one Immich album through `SHARED_LINK_KEYS`. Several comma-separated keys also work.
 
+### Map and places: what visitors' browsers contact
+- **Map tiles:** the map page loads tiles from OpenStreetMap (`tile.openstreetmap.org`). That's the only third-party host the site uses, and only on the map page. Tile requests carry only the site's origin as the referrer, as OpenStreetMap's usage policy asks.
+- **Place lookups:** done offline on the server, using GeoNames data built into the image. Credit: map © OpenStreetMap contributors; places © GeoNames (CC BY 4.0), shown on the map.
+
 ## Development
 
 ```bash
@@ -150,6 +165,7 @@ apps/public-api    Fastify: sync job + read-only JSON/image API
 apps/public-web    Svelte 5 + Vite gallery, served by nginx
 apps/admin-app     Fastify API + Svelte 5 admin UI (Cloudflare Access protected)
 packages/shared    Public types + metadata allowlist (shared by API and web)
+packages/geo       Offline gazetteer: nearest city + place search (GeoNames data)
 db/                Migrations + one-shot migrator image
 deploy/nginx       nginx config (CSP, headers, proxy to API)
 test/              Mock Immich + end-to-end test
@@ -157,9 +173,10 @@ test/              Mock Immich + end-to-end test
 
 ## Roadmap
 
-- **Phase 2:**
-  - Metadata features: timeline, coarse map, camera/lens filters, tag filters.
-  - Pagination for large libraries.
+- **Phase 2 (partly done):** home page, album cards and a city-level map are done. Still to do:
+  - a date timeline
+  - camera/lens and tag filters
+  - paging for large libraries
 - **Phase 3 (done):** admin app.
 - **Phase 4:** extra inputs (the `custom` fields).
 - **Phase 5:**

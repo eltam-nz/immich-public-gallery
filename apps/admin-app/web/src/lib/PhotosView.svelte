@@ -1,17 +1,18 @@
 <script lang="ts">
-  import type { AdminCollection, AdminPhoto } from '@showcase/shared';
+  import type { AdminCollection, AdminPhoto, AdminPlace, PlaceRef } from '@showcase/shared';
   import { api } from './api';
   import PhotoEditor from './PhotoEditor.svelte';
+  import PlacePicker from './PlacePicker.svelte';
 
   let {
     photos = $bindable(),
     collections,
-    defaultGps,
+    galleryPlaces,
     onchange,
-  }: { photos: AdminPhoto[]; collections: AdminCollection[]; defaultGps: number; onchange: () => Promise<void> } =
+  }: { photos: AdminPhoto[]; collections: AdminCollection[]; galleryPlaces: AdminPlace[]; onchange: () => Promise<void> } =
     $props();
 
-  // Filter: 'all' | 'hidden' | 'featured' | 'none' (in no collection) | a collection id
+  // Filter: 'all' | 'hidden' | 'featured' | 'none' (in no collection) | 'noplace' | a collection id
   let filter = $state('all');
   let query = $state('');
   let selected = $state<Set<string>>(new Set());
@@ -19,6 +20,8 @@
   let busy = $state(false);
   let message = $state<{ text: string; error?: boolean } | null>(null);
   let bulkCollection = $state('');
+  let pickingPlace = $state(false);
+  const FIXED_FILTERS = ['all', 'hidden', 'featured', 'none', 'noplace'];
 
   const visiblePhotos = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -26,9 +29,10 @@
       if (filter === 'hidden' && p.visible) return false;
       if (filter === 'featured' && !p.featured) return false;
       if (filter === 'none' && p.collections.length) return false;
-      if (!['all', 'hidden', 'featured', 'none'].includes(filter) && !p.collections.includes(filter)) return false;
+      if (filter === 'noplace' && p.effectivePlace) return false;
+      if (!FIXED_FILTERS.includes(filter) && !p.collections.includes(filter)) return false;
       if (!q) return true;
-      return [p.caption, p.description, p.place, p.camera, p.lens, ...p.tags]
+      return [p.caption, p.description, p.effectivePlace?.name, p.camera, p.lens, ...p.tags]
         .filter(Boolean)
         .some((s) => s!.toLowerCase().includes(q));
     });
@@ -78,6 +82,7 @@
         <option value="hidden">Hidden ({photos.filter((p) => !p.visible).length})</option>
         <option value="featured">Featured ({photos.filter((p) => p.featured).length})</option>
         <option value="none">Not in a collection ({photos.filter((p) => !p.collections.length).length})</option>
+        <option value="noplace">No location ({photos.filter((p) => !p.effectivePlace).length})</option>
         {#if collections.length}
           <optgroup label="Collections">
             {#each collections as c (c.id)}<option value={c.id}>{c.title} ({c.count})</option>{/each}
@@ -105,8 +110,15 @@
           <button class="btn" disabled={busy || !bulkCollection}
             onclick={() => bulk({ removeFrom: bulkCollection }, `Removed from ${collectionTitle(bulkCollection)}`)}>Remove</button>
         {/if}
+        <button class="btn" disabled={busy} onclick={() => (pickingPlace = !pickingPlace)}>Set location…</button>
+        <button class="btn" disabled={busy} onclick={() => bulk({ location: { mode: 'auto' } }, 'Location from GPS')}>Use GPS</button>
+        <button class="btn" disabled={busy} onclick={() => bulk({ location: { mode: 'hidden' } }, 'Location hidden')}>Hide location</button>
         <button class="btn" onclick={() => (selected = new Set())}>Clear</button>
       </div>
+      {#if pickingPlace}
+        <PlacePicker {galleryPlaces} oncancel={() => (pickingPlace = false)}
+          onpick={(pl: PlaceRef) => { pickingPlace = false; bulk({ location: { mode: 'place', placeId: pl.id } }, `Location set to ${pl.name}`); }} />
+      {/if}
     {/if}
     {#if message}<p class:error={message.error} class="msg" role="status">{message.text}</p>{/if}
 
@@ -137,7 +149,7 @@
 
   {#if editing}
     {#key editing.id}
-      <PhotoEditor photo={editing} {collections} {defaultGps} onsaved={saved} onrefresh={onchange}
+      <PhotoEditor photo={editing} {collections} {galleryPlaces} selectedIds={[...selected]} onsaved={saved} onrefresh={onchange}
         onclose={() => (editingId = null)} />
     {/key}
   {/if}

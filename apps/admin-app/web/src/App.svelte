@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AdminCollection, AdminPhoto, AdminStatus } from '@showcase/shared';
+  import type { AdminCollection, AdminPhoto, AdminPlace, AdminStatus } from '@showcase/shared';
   import { api } from './lib/api';
   import CollectionsView from './lib/CollectionsView.svelte';
   import PhotosView from './lib/PhotosView.svelte';
@@ -16,6 +16,7 @@
   let status = $state<AdminStatus | null>(null);
   let photos = $state<AdminPhoto[]>([]);
   let collections = $state<AdminCollection[]>([]);
+  let places = $state<AdminPlace[]>([]);
   let loadError = $state<string | null>(null);
 
   $effect(() => {
@@ -24,7 +25,12 @@
 
   async function reload() {
     try {
-      [status, photos, collections] = await Promise.all([api.status(), api.photos(), api.collections()]);
+      [status, photos, collections, places] = await Promise.all([
+        api.status(),
+        api.photos(),
+        api.collections(),
+        api.places(),
+      ]);
       loadError = null;
     } catch (e) {
       loadError = (e as Error).message;
@@ -58,7 +64,7 @@
   {#if !status && !loadError}
     <p class="muted">Loading…</p>
   {:else if tab === 'photos'}
-    <PhotosView bind:photos {collections} defaultGps={status?.defaultGpsPrecision ?? -1} onchange={reload} />
+    <PhotosView bind:photos {collections} galleryPlaces={places} onchange={reload} />
   {:else if tab === 'collections'}
     <CollectionsView {collections} onchange={reload} />
   {:else if status}

@@ -35,7 +35,7 @@ describe('config', () => {
   it('parses keys and defaults', () => {
     const c = loadConfig({ ...base, SHARED_LINK_KEYS: ' a, b ,,' });
     expect(c.sharedLinkKeys).toEqual(['a', 'b']);
-    expect(c.DEFAULT_GPS_PRECISION).toBe(-1);
+    expect(c.SYNC_INTERVAL_MINUTES).toBe(15);
   });
   it('rejects a short secret', () => {
     expect(() => loadConfig({ ...base, PUBLIC_ID_SECRET: 'short' })).toThrow(/PUBLIC_ID_SECRET/);

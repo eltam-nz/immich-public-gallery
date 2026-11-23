@@ -1,4 +1,4 @@
-import type { AdminCollection, AdminPhoto, AdminStatus } from '@showcase/shared';
+import type { AdminCollection, AdminPhoto, AdminPlace, AdminStatus, PlaceRef } from '@showcase/shared';
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) {
@@ -29,7 +29,10 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
 
-export type PhotoPatch = Partial<Pick<AdminPhoto, 'visible' | 'caption' | 'tags' | 'featured' | 'sort' | 'gpsPrecision'>>;
+export type LocationChoice = { mode: 'auto' } | { mode: 'hidden' } | { mode: 'place'; placeId: string };
+export type PhotoPatch = Partial<Pick<AdminPhoto, 'visible' | 'caption' | 'tags' | 'featured' | 'sort'>> & {
+  location?: LocationChoice;
+};
 export type CollectionPatch = Partial<
   Pick<AdminCollection, 'title' | 'slug' | 'description' | 'visible' | 'sort' | 'coverPhotoId'>
 >;
@@ -39,8 +42,16 @@ export const api = {
   sync: () => call<{ ok: boolean }>('POST', '/api/sync'),
   photos: () => call<AdminPhoto[]>('GET', '/api/photos'),
   updatePhoto: (id: string, patch: PhotoPatch) => call<AdminPhoto>('PATCH', `/api/photos/${id}`, patch),
-  bulk: (body: { ids: string[]; set?: { visible?: boolean; featured?: boolean }; addTo?: string; removeFrom?: string }) =>
+  bulk: (body: {
+    ids: string[];
+    set?: { visible?: boolean; featured?: boolean };
+    location?: LocationChoice;
+    addTo?: string;
+    removeFrom?: string;
+  }) =>
     call<{ updated: number }>('POST', '/api/photos/bulk', body),
+  places: () => call<AdminPlace[]>('GET', '/api/places'),
+  searchPlaces: (q: string) => call<PlaceRef[]>('GET', `/api/places/search?q=${encodeURIComponent(q)}`),
   collections: () => call<AdminCollection[]>('GET', '/api/collections'),
   createCollection: (body: CollectionPatch & { title: string }) =>
     call<AdminCollection>('POST', '/api/collections', body),
@@ -49,16 +60,7 @@ export const api = {
   deleteCollection: (id: string) => call<void>('DELETE', `/api/collections/${id}`),
 };
 
-export const GPS_OPTIONS: { value: number; label: string }[] = [
-  { value: -1, label: 'Hidden' },
-  { value: 0, label: 'Region (~110 km)' },
-  { value: 1, label: 'Area (~11 km)' },
-  { value: 2, label: 'Suburb (~1 km)' },
-  { value: 3, label: 'Street (~110 m)' },
-  { value: 4, label: 'Exact (~11 m)' },
-];
-
-export const gpsLabel = (v: number) => GPS_OPTIONS.find((o) => o.value === v)?.label ?? String(v);
+export const placeLabel = (p: PlaceRef | null) => (p ? `${p.name}, ${p.country}` : 'No location');
 
 export function formatDate(takenAt: string | null): string {
   if (!takenAt) return 'Unknown date';

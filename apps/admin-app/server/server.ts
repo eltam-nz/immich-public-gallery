@@ -14,7 +14,8 @@ import Fastify, { LogController, type FastifyInstance, type FastifyReply } from 
 import { z } from 'zod';
 import { AuthError, type Verifier } from './auth.js';
 import type { Config } from './config.js';
-import { assetIds, listCollections, listPhotos, type Sql } from './queries.js';
+import { placeById, searchPlaces } from '@showcase/geo';
+import { assetIds, knownPlace, listCollections, listPhotos, listPlaces, type Sql } from './queries.js';
 
 export const CSRF_HEADER = 'x-showcase-admin';
 
@@ -27,6 +28,16 @@ const tag = z
   .transform((t) => t.trim().replace(/\s+/g, ' '))
   .pipe(z.string().min(1).max(40));
 
+const PLACE_ID = z.string().regex(/^g\d{1,10}$/);
+
+// Location choice. A chosen place is sent by id only; the server looks it up,
+// so a client cannot invent names or coordinates.
+const locationBody = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('auto') }).strict(),
+  z.object({ mode: z.literal('hidden') }).strict(),
+  z.object({ mode: z.literal('place'), placeId: PLACE_ID }).strict(),
+]);
+
 const photoPatch = z
   .object({
     visible: z.boolean(),
@@ -34,7 +45,7 @@ const photoPatch = z
     tags: z.array(tag).max(50).transform((t) => [...new Set(t)]),
     featured: z.boolean(),
     sort: z.number().int().min(-1_000_000).max(1_000_000).nullable(),
-    gpsPrecision: z.number().int().min(-1).max(4).nullable(),
+    location: locationBody,
   })
   .partial()
   .strict();
@@ -43,6 +54,7 @@ const bulkBody = z
   .object({
     ids: z.array(PUBLIC_ID).min(1).max(5000),
     set: z.object({ visible: z.boolean(), featured: z.boolean() }).partial().strict().optional(),
+    location: locationBody.optional(),
     addTo: PUBLIC_ID.optional(),
     removeFrom: PUBLIC_ID.optional(),
   })
@@ -161,7 +173,6 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
           }
         : null,
       counts: counts!,
-      defaultGpsPrecision: cfg.DEFAULT_GPS_PRECISION,
       publicSiteUrl: cfg.PUBLIC_SITE_URL ?? null,
     };
   });
@@ -169,6 +180,22 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
   app.post('/api/sync', async () => {
     await sql`SELECT pg_notify('showcase_sync', '')`;
     return { ok: true };
+  });
+
+  /** photos_meta columns for a location choice, or null if the place is unknown. */
+  async function locationFields(loc: z.infer<typeof locationBody>) {
+    if (loc.mode !== 'place') return { location_mode: loc.mode, location_place: null };
+    const place = placeById(loc.placeId) ?? (await knownPlace(sql, loc.placeId));
+    return place ? { location_mode: 'place', location_place: sql.json(place as never) } : null;
+  }
+
+  // ---- Places ----
+  app.get('/api/places', async () => listPlaces(sql));
+
+  app.get<{ Querystring: { q?: string } }>('/api/places/search', async (req, reply) => {
+    const q = (req.query.q ?? '').trim();
+    if (q.length < 2 || q.length > 100) return reply.code(400).send({ error: 'bad_request', issues: ['q: 2-100 characters'] });
+    return searchPlaces(q, 20);
   });
 
   // ---- Photos ----
@@ -186,7 +213,11 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
     if (b.tags !== undefined) fields.tags = b.tags;
     if (b.featured !== undefined) fields.featured = b.featured;
     if (b.sort !== undefined) fields.sort = b.sort;
-    if (b.gpsPrecision !== undefined) fields.gps_precision = b.gpsPrecision;
+    if (b.location) {
+      const loc = await locationFields(b.location);
+      if (!loc) return reply.code(400).send({ error: 'bad_request', issues: ['location.placeId: unknown place'] });
+      Object.assign(fields, loc);
+    }
 
     const [asset] = await sql<{ immich_asset_id: string }[]>`
       SELECT immich_asset_id FROM assets WHERE public_id = ${id.data}`;
@@ -203,7 +234,13 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
   app.post('/api/photos/bulk', async (req, reply) => {
     const body = bulkBody.safeParse(req.body);
     if (!body.success) return badRequest(reply, body.error);
-    const { set, addTo, removeFrom } = body.data;
+    const { addTo, removeFrom } = body.data;
+    let set: Record<string, unknown> | undefined = body.data.set;
+    if (body.data.location) {
+      const loc = await locationFields(body.data.location);
+      if (!loc) return reply.code(400).send({ error: 'bad_request', issues: ['location.placeId: unknown place'] });
+      set = { ...set, ...loc };
+    }
     const assets = await assetIds(sql, body.data.ids);
     if (!assets.length) return { updated: 0 };
     await sql.begin(async (tx) => {

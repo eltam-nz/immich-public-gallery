@@ -3,6 +3,7 @@
  * allowlisted metadata, and caches metadata-free images. This is the only code
  * path that talks to Immich; public HTTP requests are served from DB + cache.
  */
+import { nearestPlace } from '@showcase/geo';
 import { sanitizeExif } from '@showcase/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from './config.js';
@@ -111,6 +112,10 @@ export class Syncer {
       const version = assetVersion(asset.checksum);
       const takenAt = (asset.localDateTime ?? asset.fileCreatedAt ?? null)?.slice(0, 19) ?? null;
       const meta = sanitizeExif(asset.exifInfo);
+      // City-level place from GPS (offline gazetteer). Recomputed every sync, so
+      // existing photos are filled in and dataset updates are picked up.
+      const place =
+        meta.latitude !== undefined && meta.longitude !== undefined ? nearestPlace(meta.latitude, meta.longitude) : null;
       await this.sql`
         INSERT INTO assets ${this.sql({
           public_id: pid,
@@ -122,6 +127,7 @@ export class Syncer {
           version,
           taken_at: takenAt,
           meta: this.sql.json(meta as never),
+          place: place ? this.sql.json(place as never) : null,
         })}
         ON CONFLICT (immich_asset_id) DO UPDATE SET
           album_id = EXCLUDED.album_id,
@@ -131,6 +137,7 @@ export class Syncer {
           version = EXCLUDED.version,
           taken_at = EXCLUDED.taken_at,
           meta = EXCLUDED.meta,
+          place = EXCLUDED.place,
           synced_at = now()`;
       if (existing.get(asset.id)?.cached_version !== version) needImages.push(s);
     }

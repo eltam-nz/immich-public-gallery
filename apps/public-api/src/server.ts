@@ -6,7 +6,14 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import rateLimit from '@fastify/rate-limit';
-import { imageUrl, toPublicPhoto, type PhotoRow, type PublicCollection, type SiteInfo } from '@showcase/shared';
+import {
+  imageUrl,
+  toPublicPhoto,
+  type PhotoRow,
+  type PublicCollection,
+  type PublicPlace,
+  type SiteInfo,
+} from '@showcase/shared';
 import Fastify, { LogController, type FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
 import type { Sql } from './db.js';
@@ -14,13 +21,22 @@ import { PUBLIC_ID_RE, VERSION_RE } from './ids.js';
 import { imagePath, isSizeName } from './images.js';
 
 const COLLECTION_PARAM_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const PLACE_PARAM_RE = /^g\d{1,10}$/;
+
+/** The place a photo publishes: chosen place, nearest city from GPS, or none. */
+export const EFFECTIVE_PLACE = `CASE COALESCE(pm.location_mode, 'auto')
+  WHEN 'hidden' THEN NULL WHEN 'place' THEN pm.location_place ELSE a.place END`;
 
 /**
  * Visible, fully-cached photos joined with admin overrides and their visible
  * collections. With `collectionId`, only that collection's photos, in the
  * collection's own order.
  */
-function photoQuery(sql: Sql, opts: { publicId?: string; collection?: string } = {}) {
+function photoQuery(
+  sql: Sql,
+  opts: { publicId?: string; collection?: string; place?: string; featured?: boolean } = {},
+) {
+  const place = sql.unsafe(EFFECTIVE_PLACE);
   const inCollection = opts.collection
     ? sql`JOIN collection_photos fcp ON fcp.immich_asset_id = a.immich_asset_id
           JOIN collections fc ON fc.id = fcp.collection_id AND fc.visible
@@ -34,13 +50,15 @@ function photoQuery(sql: Sql, opts: { publicId?: string; collection?: string } =
                                      ORDER BY c.sort, c.title), '[]'::json)
               FROM collection_photos cp JOIN collections c ON c.id = cp.collection_id
              WHERE cp.immich_asset_id = a.immich_asset_id AND c.visible) AS collections,
-           pm.caption, pm.tags, pm.featured, pm.gps_precision, pm.custom
+           pm.caption, pm.tags, pm.featured, ${place} AS place, pm.custom
     FROM assets a
     ${inCollection}
     LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
     WHERE a.cached_version IS NOT NULL
       AND COALESCE(pm.visible, true)
       ${opts.publicId ? sql`AND a.public_id = ${opts.publicId}` : sql``}
+      ${opts.place ? sql`AND (${place})->>'id' = ${opts.place}` : sql``}
+      ${opts.featured ? sql`AND COALESCE(pm.featured, false)` : sql``}
     ORDER BY ${opts.collection ? sql`fcp.sort ASC NULLS LAST,` : sql``}
              pm.sort ASC NULLS LAST, a.taken_at DESC NULLS LAST, a.public_id`;
 }
@@ -82,18 +100,39 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
 
   app.get('/api/site', async (): Promise<SiteInfo> => ({ title: cfg.SITE_TITLE }));
 
-  app.get<{ Querystring: { collection?: string } }>('/api/photos', async (req, reply) => {
-    const c = req.query.collection;
-    if (c !== undefined && !COLLECTION_PARAM_RE.test(c)) return reply.code(400).send({ error: 'bad_request' });
-    const rows = await photoQuery(sql, { collection: c });
-    return rows.map((r) => toPublicPhoto(r, cfg.DEFAULT_GPS_PRECISION));
+  app.get<{ Querystring: { collection?: string; place?: string; featured?: string } }>('/api/photos', async (req, reply) => {
+    const { collection, place, featured } = req.query;
+    if (collection !== undefined && !COLLECTION_PARAM_RE.test(collection)) return reply.code(400).send({ error: 'bad_request' });
+    if (place !== undefined && !PLACE_PARAM_RE.test(place)) return reply.code(400).send({ error: 'bad_request' });
+    const rows = await photoQuery(sql, { collection, place, featured: featured === '1' });
+    return rows.map((r) => toPublicPhoto(r));
+  });
+
+  // Places (cities) with visible photos. Coordinates are the city's own.
+  app.get('/api/places', async (): Promise<PublicPlace[]> => {
+    const rows = await sql<(Omit<PublicPlace, 'cover'> & { cover_id: string; cover_version: string })[]>`
+      WITH v AS (
+        SELECT a.public_id, a.cached_version, a.taken_at, ${sql.unsafe(EFFECTIVE_PLACE)} AS place
+        FROM assets a
+        LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
+        WHERE a.cached_version IS NOT NULL AND COALESCE(pm.visible, true)
+      )
+      SELECT place->>'id' AS id, place->>'name' AS name, place->>'country' AS country,
+             (place->>'lat')::float8 AS lat, (place->>'lon')::float8 AS lon,
+             COUNT(*)::int AS count,
+             (ARRAY_AGG(public_id ORDER BY taken_at DESC NULLS LAST))[1] AS cover_id,
+             (ARRAY_AGG(cached_version ORDER BY taken_at DESC NULLS LAST))[1] AS cover_version
+      FROM v WHERE place IS NOT NULL
+      GROUP BY 1, 2, 3, 4, 5
+      ORDER BY count DESC, name`;
+    return rows.map(({ cover_id, cover_version, ...p }) => ({ ...p, cover: imageUrl(cover_id, cover_version, 'thumb') }));
   });
 
   app.get<{ Params: { id: string } }>('/api/photos/:id', async (req, reply) => {
     if (!PUBLIC_ID_RE.test(req.params.id)) return reply.code(404).send({ error: 'not_found' });
     const [row] = await photoQuery(sql, { publicId: req.params.id });
     if (!row) return reply.code(404).send({ error: 'not_found' });
-    return toPublicPhoto(row, cfg.DEFAULT_GPS_PRECISION);
+    return toPublicPhoto(row);
   });
 
   // Visible collections that contain at least one visible photo.

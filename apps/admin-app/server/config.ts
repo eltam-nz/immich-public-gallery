@@ -25,7 +25,6 @@ const schema = z.object({
   CF_ACCESS_JWKS_URL: z.string().url().optional(),
   CACHE_DIR: z.string().default('/cache'),
   PUBLIC_SITE_URL: z.string().url().optional().or(z.literal('').transform(() => undefined)),
-  DEFAULT_GPS_PRECISION: z.coerce.number().int().min(-1).max(4).default(-1),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 });
 

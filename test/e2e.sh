@@ -50,9 +50,10 @@ pass "database and image cache live in bind mounts under DATA_DIR"
 body=$(curl -fsS $WEB/api/photos)
 echo "$body" | grep -qiE 'immich|SHOULD-NOT-LEAK|serial|fileSize|test-shared-link-key|aaaaaaaa-' && fail "internal data leaked: $body"
 pass "no Immich IDs, keys, serials or non-allowlisted fields in API"
-echo "$body" | grep -q '"lat"' && fail "GPS exposed with DEFAULT_GPS_PRECISION=-1"
-echo "$body" | grep -q '"city":"London"' || fail "expected allowlisted city"
-pass "coordinates hidden by default, place names kept"
+echo "$body" | grep -qE '"(lat|lon|latitude|longitude)"|51\.50|0\.124' && fail "photo coordinates published: $body"
+echo "$body" | grep -q '"location":{"placeId":"g[0-9]*","name":"London","country":"United Kingdom"}' || fail "expected city-level place London: $body"
+echo "$body" | grep -qE '"state"|"England"|"city"' && fail "Immich's own place fields published"
+pass "only the nearest city is published (London), never coordinates"
 
 thumb=$(echo "$body" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s)[0].src.thumb))')
 curl -fsS -o /tmp/e2e-thumb.webp $WEB$thumb || fail "image not served"
@@ -117,15 +118,44 @@ COLL=$(curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d '{"title":"Holiday","slug":"h
 [ -n "$COLL" ] || fail "create collection"
 [ "$(code -X POST "${AUTH[@]}" "${W[@]}" -d '{"title":"Dup","slug":"holiday"}' $ADMIN/api/collections)" = 409 ] || fail "duplicate slug not rejected"
 curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P1\",\"$P2\"],\"addTo\":\"$COLL\"}" $ADMIN/api/photos/bulk >/dev/null || fail "add to collection"
-curl -fsS -X PATCH "${AUTH[@]}" "${W[@]}" -d '{"caption":"Hello world","tags":["sea"," sea ","sky"],"gpsPrecision":2}' $ADMIN/api/photos/$P1 | grep -q '"tags":\["sea","sky"\]' || fail "edit photo"
+curl -fsS -X PATCH "${AUTH[@]}" "${W[@]}" -d '{"caption":"Hello world","tags":["sea"," sea ","sky"]}' $ADMIN/api/photos/$P1 | grep -q '"tags":\["sea","sky"\]' || fail "edit photo"
 [ "$(code -X PATCH "${AUTH[@]}" "${W[@]}" -d '{"immich_asset_id":"x"}' $ADMIN/api/photos/$P1)" = 400 ] || fail "unknown field accepted"
 
 pub=$(curl -fsS $WEB/api/collections)
 echo "$pub" | grep -q '"slug":"holiday"' && echo "$pub" | grep -q '"count":2' && echo "$pub" | grep -q '"cover":"/img/' || fail "public collections: $pub"
 [ "$(curl -fsS "$WEB/api/photos?collection=holiday" | jq_ 'd.length')" = 2 ] || fail "public collection filter"
 p1=$(curl -fsS $WEB/api/photos/$P1)
-echo "$p1" | grep -q '"caption":"Hello world"' && echo "$p1" | grep -q '"lat":51.5' && echo "$p1" | grep -q '"title":"Holiday"' || fail "public photo edits: $p1"
-pass "admin: collections, captions, tags and GPS precision reach the public site"
+echo "$p1" | grep -q '"caption":"Hello world"' && echo "$p1" | grep -q '"title":"Holiday"' || fail "public photo edits: $p1"
+pass "admin: collections, captions and tags reach the public site"
+
+# ---- Places ----
+places() { curl -fsS $WEB/api/places; }
+pl=$(places)
+[ "$(echo "$pl" | jq_ 'd.length')" = 1 ] && echo "$pl" | grep -q '"name":"London"' && echo "$pl" | grep -q '"count":3' || fail "public places: $pl"
+LONDON=$(echo "$pl" | jq_ 'd[0].id')
+[ "$(curl -fsS "$WEB/api/photos?place=$LONDON" | jq_ 'd.length')" = 3 ] || fail "photos by place"
+[ "$(code "$WEB/api/photos?place=../etc")" = 400 ] || fail "bad place id accepted"
+BATH=$(curl -fsS "${AUTH[@]}" "$ADMIN/api/places/search?q=bath" | jq_ 'd[0].countryCode==="GB" ? d[0].id : ""')
+[ -n "$BATH" ] || fail "place search did not find Bath, GB"
+curl -fsS -X PATCH "${AUTH[@]}" "${W[@]}" -d "{\"location\":{\"mode\":\"place\",\"placeId\":\"$BATH\"}}" $ADMIN/api/photos/$P1 | grep -q '"locationMode":"place"' || fail "set place"
+pl=$(places)
+[ "$(echo "$pl" | jq_ 'd.length')" = 2 ] && echo "$pl" | grep -q '"name":"Bath"' || fail "public places after setting Bath: $pl"
+pass "places: GPS snaps to the city; a chosen place (search) shows on the map"
+
+# Copy one photo's place to others (bulk), then hide one, then back to GPS.
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P2\",\"$P3\"],\"location\":{\"mode\":\"place\",\"placeId\":\"$BATH\"}}" $ADMIN/api/photos/bulk >/dev/null || fail "bulk place"
+[ "$(curl -fsS "$WEB/api/photos?place=$BATH" | jq_ 'd.length')" = 3 ] || fail "bulk-applied place"
+curl -fsS -X PATCH "${AUTH[@]}" "${W[@]}" -d '{"location":{"mode":"hidden"}}' $ADMIN/api/photos/$P3 >/dev/null
+curl -fsS $WEB/api/photos/$P3 | grep -q '"location":null' || fail "hidden location still published"
+[ "$(curl -fsS "$WEB/api/photos?place=$BATH" | jq_ 'd.length')" = 2 ] || fail "hidden photo still counted at place"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P1\",\"$P2\",\"$P3\"],\"location\":{\"mode\":\"auto\"}}" $ADMIN/api/photos/bulk >/dev/null
+pl=$(places)
+[ "$(echo "$pl" | jq_ 'd.length')" = 1 ] && echo "$pl" | grep -q '"count":3' || fail "back to GPS: $pl"
+pass "places: apply a place to selected photos, hide a location, return to GPS"
+
+[ "$(code -X PATCH "${AUTH[@]}" "${W[@]}" -d '{"location":{"mode":"place","placeId":"g999999999"}}' $ADMIN/api/photos/$P1)" = 400 ] || fail "unknown place accepted"
+[ "$(code -X PATCH "${AUTH[@]}" "${W[@]}" -d '{"location":{"mode":"place","placeId":"'$BATH'","name":"Evil","lat":1}}' $ADMIN/api/photos/$P1)" = 400 ] || fail "forged place fields accepted"
+pass "places: unknown or forged places are rejected"
 
 P2_THUMB=$(curl -fsS $WEB/api/photos/$P2 | jq_ 'd.src.thumb')
 curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P2\"],\"set\":{\"visible\":false}}" $ADMIN/api/photos/bulk >/dev/null

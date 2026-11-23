@@ -1,10 +1,12 @@
 import { mkdir } from 'node:fs/promises';
+import { loadGazetteer } from '@showcase/geo';
 import { loadConfig } from './config.js';
 import { connect } from './db.js';
 import { buildServer } from './server.js';
 import { Syncer } from './sync.js';
 
 const cfg = loadConfig();
+loadGazetteer(); // load city data at startup, not during the first sync
 await mkdir(cfg.CACHE_DIR, { recursive: true });
 const sql = connect(cfg.DATABASE_URL);
 const app = await buildServer(cfg, sql);

@@ -1,3 +1,4 @@
+import { loadGazetteer } from '@showcase/geo';
 import postgres from 'postgres';
 import { createVerifier, remoteKeys } from './auth.js';
 import { loadConfig } from './config.js';
@@ -11,6 +12,7 @@ try {
   console.error(`${(err as Error).message}\nThe admin app needs Cloudflare Access settings; see README "Admin app".`);
   process.exit(1);
 }
+loadGazetteer(); // city data for place search
 const sql = postgres(cfg.DATABASE_URL, { max: 5, idle_timeout: 30, connect_timeout: 10, onnotice: () => {} });
 const verify = createVerifier({
   issuer: cfg.issuer,

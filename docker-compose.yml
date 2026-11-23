@@ -66,7 +66,6 @@ services:
       SHARED_LINK_KEYS: ${SHARED_LINK_KEYS:-}
       PUBLIC_ID_SECRET: ${PUBLIC_ID_SECRET:?set PUBLIC_ID_SECRET}
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
-      DEFAULT_GPS_PRECISION: ${DEFAULT_GPS_PRECISION:--1}
       SITE_TITLE: ${SITE_TITLE:-Photos}
       CACHE_DIR: /cache
     volumes:
@@ -123,7 +122,6 @@ services:
       CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
-      DEFAULT_GPS_PRECISION: ${DEFAULT_GPS_PRECISION:--1}
       CACHE_DIR: /cache
     volumes:
       - ${DATA_DIR:-/srv/docker/immich-showcase}/cache:/cache:ro

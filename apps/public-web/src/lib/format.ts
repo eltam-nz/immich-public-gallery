@@ -18,7 +18,5 @@ export function formatExposure(e: PublicPhoto['exposure']): string[] {
 }
 
 export function formatPlace(l: PublicPhoto['location']): string | null {
-  if (!l) return null;
-  const s = [l.city, l.state, l.country].filter(Boolean).join(', ');
-  return s || null;
+  return l ? `${l.name}, ${l.country}` : null;
 }

@@ -70,13 +70,8 @@ export interface PublicPhoto {
     iso?: number;
     focalLength?: number;
   };
-  location: {
-    city?: string;
-    state?: string;
-    country?: string;
-    lat?: number;
-    lon?: number;
-  } | null;
+  /** City-level place only; photo coordinates are never published. */
+  location: { placeId: string; name: string; country: string } | null;
   description: string | null;
   caption: string | null;
   tags: string[];
@@ -125,12 +120,28 @@ export function sanitizeExif(exif: ImmichExif | null | undefined): StoredMeta {
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as StoredMeta;
 }
 
-/** Round a coordinate to `precision` decimals; precision < 0 hides it. */
-export function roundCoord(v: number | undefined, precision: number): number | undefined {
-  if (v === undefined || precision < 0) return undefined;
-  const p = Math.min(Math.floor(precision), 4);
-  const f = 10 ** p;
-  return Math.round(v * f) / f;
+/** A city-level place (same shape as @showcase/geo's Place). */
+export interface PlaceRef {
+  id: string;
+  name: string;
+  country: string;
+  countryCode: string;
+  /** The place's own coordinates, never a photo's. */
+  lat: number;
+  lon: number;
+}
+
+export type LocationMode = 'auto' | 'place' | 'hidden';
+
+export interface PublicPlace {
+  id: string;
+  name: string;
+  country: string;
+  lat: number;
+  lon: number;
+  count: number;
+  /** Thumbnail URL of the newest photo there. */
+  cover: string | null;
 }
 
 /** Camera label without duplicated brand, e.g. "Canon Canon EOS R5" -> "Canon EOS R5". */
@@ -152,25 +163,17 @@ export interface PhotoRow {
   caption: string | null;
   tags: string[] | null;
   featured: boolean | null;
-  gps_precision: number | null;
+  /** Effective city-level place (already resolved: auto / chosen / hidden). */
+  place: PlaceRef | null;
   custom: Record<string, unknown> | null;
 }
 
 /** The single gate between stored data and the public API. */
-export function toPublicPhoto(row: PhotoRow, defaultGpsPrecision: number): PublicPhoto {
+export function toPublicPhoto(row: PhotoRow): PublicPhoto {
   const m = row.meta ?? {};
-  const precision = row.gps_precision ?? defaultGpsPrecision;
-  const lat = roundCoord(m.latitude, precision);
-  const lon = roundCoord(m.longitude, precision);
-  const location =
-    m.city || m.state || m.country || lat !== undefined
-      ? {
-          ...(m.city && { city: m.city }),
-          ...(m.state && { state: m.state }),
-          ...(m.country && { country: m.country }),
-          ...(lat !== undefined && lon !== undefined && { lat, lon }),
-        }
-      : null;
+  const location = row.place
+    ? { placeId: row.place.id, name: row.place.name, country: row.place.country }
+    : null;
   const exposure: PublicPhoto['exposure'] = {};
   if (m.aperture !== undefined) exposure.aperture = m.aperture;
   if (m.shutter !== undefined) exposure.shutter = m.shutter;
@@ -210,18 +213,21 @@ export interface AdminPhoto {
   takenAt: string | null;
   camera: string | null;
   lens: string | null;
-  /** Place names from Immich (always shown publicly when present). */
-  place: string | null;
-  /** Exact coordinates, admin-only. What is published depends on gpsPrecision. */
+  /** Exact GPS coordinates, admin-only. Never published. */
   exactLocation: { lat: number; lon: number } | null;
+  /** Nearest city to the GPS coordinates (null without GPS). */
+  gpsPlace: PlaceRef | null;
+  locationMode: LocationMode;
+  /** The place you chose (mode 'place'). */
+  locationPlace: PlaceRef | null;
+  /** What the public site shows. */
+  effectivePlace: PlaceRef | null;
   description: string | null;
   visible: boolean;
   caption: string | null;
   tags: string[];
   featured: boolean;
   sort: number | null;
-  /** null = site default. */
-  gpsPrecision: number | null;
   collections: string[];
   src: { thumb: string; preview: string };
 }
@@ -250,6 +256,10 @@ export interface AdminStatus {
     immichVersion: string | null;
   } | null;
   counts: { photos: number; hidden: number; collections: number };
-  defaultGpsPrecision: number;
   publicSiteUrl: string | null;
+}
+
+export interface AdminPlace extends PlaceRef {
+  /** Photos (including hidden ones) currently showing this place. */
+  count: number;
 }
