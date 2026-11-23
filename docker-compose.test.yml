@@ -5,6 +5,7 @@ services:
     command: node /mock/server.mjs
     environment:
       MOCK_IMMICH_MODE: ${MOCK_IMMICH_MODE:-current}
+      MOCK_EXTRA_PHOTOS: ${MOCK_EXTRA_PHOTOS:-0}
     volumes: ["./test/mock-immich:/mock:ro"]
     networks: [immich]
     ports: ["127.0.0.1:2283:2283"]

@@ -19,7 +19,8 @@ function get<T>(path: string): Promise<T> {
 export const api = {
   site: () => get<SiteInfo>('/api/site'),
   collections: () => get<PublicCollection[]>('/api/collections'),
-  places: () => get<PublicPlace[]>('/api/places'),
+  places: (collection?: string) =>
+    get<PublicPlace[]>(collection ? `/api/places?collection=${encodeURIComponent(collection)}` : '/api/places'),
   photos: (filter: { collection?: string; place?: string; featured?: boolean } = {}) => {
     const q = new URLSearchParams();
     if (filter.collection) q.set('collection', filter.collection);

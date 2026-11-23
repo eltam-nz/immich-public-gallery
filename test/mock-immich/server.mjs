@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const KEY = 'test-shared-link-key';
 const ALBUM = '11111111-1111-4111-8111-111111111111';
-const id = (n) => `aaaaaaaa-aaaa-4aaa-8aaa-00000000000${n}`;
+const id = (n) => `aaaaaaaa-aaaa-4aaa-8aaa-${String(n).padStart(12, '0')}`;
 
 const exif = (extra) => ({
   make: 'Canon', model: 'Canon EOS R5', lensModel: 'RF24-70mm F2.8 L IS USM',
@@ -35,6 +35,18 @@ function signAccessToken({ email, aud = 'test-aud', iss = 'https://test.cloudfla
   const now = Math.floor(Date.now() / 1000);
   const body = `${b64({ alg: 'RS256', kid: 'test-key', typ: 'JWT' })}.${b64({ email, aud: [aud], iss, iat: now, exp: now + expSeconds, type: 'app' })}`;
   return `${body}.${createSign('RSA-SHA256').update(body).sign(privateKey).toString('base64url')}`;
+}
+
+// Optional extra photos for UI demos (not used by e2e): MOCK_EXTRA_PHOTOS=N
+// spreads N more images over a year and a few New Zealand cities.
+const EXTRA_PLACES = [[-36.8485, 174.7633], [-43.5321, 172.6362], [-41.2866, 174.7756], [-45.0312, 168.6626]];
+for (let i = 0; i < Number(process.env.MOCK_EXTRA_PHOTOS ?? 0); i++) {
+  const [lat, lon] = EXTRA_PLACES[i % EXTRA_PLACES.length];
+  const month = String((i % 12) + 1).padStart(2, '0');
+  assets.push({
+    id: id(100 + i), type: 'IMAGE', checksum: `x${i}`, localDateTime: `2025-${month}-1${i % 9}T10:00:00.000Z`,
+    exifInfo: exif({ latitude: lat, longitude: lon, city: null, description: null }), file: ['a.jpg', 'b.jpg', 'c.jpg'][i % 3],
+  });
 }
 
 let revoked = false;

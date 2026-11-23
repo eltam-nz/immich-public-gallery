@@ -46,8 +46,11 @@ export interface PublicCollection {
   title: string;
   description: string | null;
   count: number;
-  /** Thumbnail URL of the cover photo, or null if the collection is empty. */
-  cover: string | null;
+  /**
+   * Up to four thumbnail URLs for the collection's tile: one random photo from
+   * each quarter of the collection (by date); an admin-chosen cover comes first.
+   */
+  covers: string[];
 }
 
 export interface CollectionRef {

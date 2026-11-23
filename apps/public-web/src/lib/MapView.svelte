@@ -1,17 +1,13 @@
 <script lang="ts">
   // Loaded on demand (dynamic import) so Leaflet is only downloaded for the map.
   import type { PublicPlace } from '@showcase/shared';
-  import L from 'leaflet';
-  import 'leaflet/dist/leaflet.css';
+  import { addBaseLayer, fitTo, L, MARKER_STYLE, markerRadius as radius } from './leaflet';
   import { onMount } from 'svelte';
   import { plural } from './api';
   import { href, link, navigate } from './router';
 
   let { places }: { places: PublicPlace[] } = $props();
   let el = $state<HTMLDivElement>();
-
-  // Marker size grows with the number of photos; never smaller than a fingertip.
-  const radius = (count: number) => Math.min(30, 20 + Math.log2(count) * 2.5);
 
   function popupContent(p: PublicPlace): HTMLElement {
     // Built with DOM APIs (not HTML strings), so names can't inject markup.
@@ -46,32 +42,19 @@
       zoomSnap: 0.5,
       worldCopyJump: true,
     });
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18,
-      // OpenStreetMap's tile policy asks for a referrer; send only our origin.
-      referrerPolicy: 'strict-origin-when-cross-origin',
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · Places &copy; <a href="https://www.geonames.org/" target="_blank" rel="noopener">GeoNames</a>',
-    }).addTo(map);
-    map.attributionControl.setPrefix(false);
+    addBaseLayer(map);
 
-    const bounds = L.latLngBounds([]);
     for (const p of places) {
       L.circleMarker([p.lat, p.lon], {
         radius: radius(p.count),
-        color: '#ffffff',
-        weight: 3,
-        fillColor: '#0b3d91',
-        fillOpacity: 0.85,
+        ...MARKER_STYLE,
         bubblingMouseEvents: false,
       })
         .bindPopup(popupContent(p), { maxWidth: 260, minWidth: 200, closeButton: true })
         .bindTooltip(`${p.name} (${p.count})`, { direction: 'top', offset: [0, -radius(p.count)] })
         .addTo(map);
-      bounds.extend([p.lat, p.lon]);
     }
-    if (places.length === 1) map.setView([places[0]!.lat, places[0]!.lon], 9);
-    else map.fitBounds(bounds, { padding: [40, 40], maxZoom: 9 });
+    fitTo(map, places.map((p) => [p.lat, p.lon]));
     return () => map.remove();
   });
 </script>

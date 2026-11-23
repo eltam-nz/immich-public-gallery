@@ -90,7 +90,7 @@
           </dd>
         {/if}
         {#if photo.collections.length}
-          <dt>{photo.collections.length > 1 ? 'Albums' : 'Album'}</dt>
+          <dt>{photo.collections.length > 1 ? 'Collections' : 'Collection'}</dt>
           <dd>{photo.collections.map((c) => c.title).join(', ')}</dd>
         {/if}
         {#if photo.camera}<dt>Camera</dt><dd>{photo.camera}</dd>{/if}

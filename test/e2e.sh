@@ -122,7 +122,21 @@ curl -fsS -X PATCH "${AUTH[@]}" "${W[@]}" -d '{"caption":"Hello world","tags":["
 [ "$(code -X PATCH "${AUTH[@]}" "${W[@]}" -d '{"immich_asset_id":"x"}' $ADMIN/api/photos/$P1)" = 400 ] || fail "unknown field accepted"
 
 pub=$(curl -fsS $WEB/api/collections)
-echo "$pub" | grep -q '"slug":"holiday"' && echo "$pub" | grep -q '"count":2' && echo "$pub" | grep -q '"cover":"/img/' || fail "public collections: $pub"
+echo "$pub" | grep -q '"slug":"holiday"' && echo "$pub" | grep -q '"count":2' || fail "public collections: $pub"
+# Cover tiles: 1-4 thumbnails, all from photos in the collection.
+H_IDS=$(curl -fsS "$WEB/api/photos?collection=holiday" | jq_ 'd.map(p=>p.id).join(",")')
+echo "$pub" | node -e '
+  let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+    const c=JSON.parse(s).find(x=>x.slug==="holiday"); const ids=process.argv[1].split(",");
+    const ok=c && Array.isArray(c.covers) && c.covers.length>=1 && c.covers.length<=4 &&
+      c.covers.every(u=>/^\/img\/[A-Za-z0-9_-]{16}\/[a-f0-9]{12}\/thumb\.webp$/.test(u) && ids.includes(u.split("/")[2])) &&
+      new Set(c.covers).size===c.covers.length && !("cover" in c);
+    if(!ok){console.error(JSON.stringify(c));process.exit(1)}})' "$H_IDS" || fail "collection cover tiles"
+curl -fsS -X PATCH "${AUTH[@]}" "${W[@]}" -d "{\"coverPhotoId\":\"$P2\"}" $ADMIN/api/collections/$COLL >/dev/null
+curl -fsS $WEB/api/collections | jq_ 'd.find(x=>x.slug==="holiday").covers[0].split("/")[2]' | grep -qx "$P2" || fail "chosen cover not first"
+[ "$(curl -fsS "$WEB/api/places?collection=holiday" | jq_ 'd.reduce((n,p)=>n+p.count,0)')" = 2 ] || fail "places filtered by collection"
+[ "$(code "$WEB/api/places?collection=../x")" = 400 ] || fail "bad collection id accepted by places"
+pass "collections: up to 4 cover tiles from the collection (chosen cover first); places per collection"
 [ "$(curl -fsS "$WEB/api/photos?collection=holiday" | jq_ 'd.length')" = 2 ] || fail "public collection filter"
 p1=$(curl -fsS $WEB/api/photos/$P1)
 echo "$p1" | grep -q '"caption":"Hello world"' && echo "$p1" | grep -q '"title":"Holiday"' || fail "public photo edits: $p1"

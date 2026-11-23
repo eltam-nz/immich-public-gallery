@@ -2,10 +2,11 @@
 
 A self-hosted public photo site built from selected Immich albums. It runs as a Portainer stack and is published through a Cloudflare Tunnel. Immich itself is never exposed.
 
-**Status:** foundation, admin app, backups and the visitor-facing site are done. One Immich album is shared through a link key. Everything else is managed inside the gallery, from a private admin app: albums (sub-album collections), captions, tags, highlights, visibility and each photo's place.
+**Status:** foundation, admin app, backups and the visitor-facing site are done. One Immich album is shared through a link key. Everything else is managed inside the gallery, from a private admin app: collections (sub-albums), captions, tags, visibility and each photo's place.
 
-**The public site** is built for phones and older visitors: large text, high contrast, big labelled buttons and simple navigation (Home, albums, All photos, Map).
-- **Home page:** highlights (featured photos) and album cards.
+**The public site** is built for phones and older visitors: large text, high contrast, big labelled buttons and simple navigation (Home, collections, All photos, Map).
+- **Home page:** collection cards. Each card shows a 2×2 tile of four random photos spread across the collection, which changes between visits. A cover chosen in the admin app is always one of the four.
+- **Collection page:** a small fixed map of the towns where its photos were taken, with "Taken in" links to each place, above the photos.
 - **Map:** photos grouped by town or city, plus a plain list of places.
 - **Photo viewer:** large Previous / Close / Next buttons and swipe support.
 
@@ -86,7 +87,7 @@ Shared tunnel: your existing cloudflared ─(TUNNEL_NETWORK)→ public-web (alia
    Create the Access application **before** the route. If the route goes live first, the app still rejects everyone, because no valid Access token exists yet.
 
 In the admin app:
-- **Photos:** show or hide photos, feature them (they appear under Highlights), and edit captions, tags and sort order. Bulk-select to hide, show or feature photos, or add them to (or remove them from) a collection.
+- **Photos:** show or hide photos, and edit captions, tags and sort order. The "Featured" flag is kept but currently isn't shown on the public site. Bulk-select to hide, show or feature photos, or add them to (or remove them from) a collection.
 - **Location:** each photo shows its town or city, worked out from its GPS. You can choose another place (search any town or city, or pick one already in the gallery), switch back to GPS, or hide the location.
   - **Copy a place to other photos:** tick the photos that need it, open a photo that already has the right place, and click **Apply \<place\> to N selected photos**.
   - **Find photos without a place:** use the **No location** filter.
@@ -133,7 +134,7 @@ The `backup` service writes a verified `pg_dump` of the database every `BACKUP_I
 The gallery shares one Immich album through `SHARED_LINK_KEYS`. Several comma-separated keys also work.
 
 ### Map and places: what visitors' browsers contact
-- **Map tiles:** the map page loads tiles from OpenStreetMap (`tile.openstreetmap.org`). That's the only third-party host the site uses, and only on the map page. Tile requests carry only the site's origin as the referrer, as OpenStreetMap's usage policy asks.
+- **Map tiles:** the Map page and the small map on collection pages load tiles from OpenStreetMap (`tile.openstreetmap.org`). That's the only third-party host the site uses, and only on those pages. Tile requests carry only the site's origin as the referrer, as OpenStreetMap's usage policy asks.
 - **Place lookups:** done offline on the server, using GeoNames data built into the image. Credit: map © OpenStreetMap contributors; places © GeoNames (CC BY 4.0), shown on the map.
 
 ## Development
@@ -173,7 +174,7 @@ test/              Mock Immich + end-to-end test
 
 ## Roadmap
 
-- **Phase 2 (partly done):** home page, album cards and a city-level map are done. Still to do:
+- **Phase 2 (partly done):** home page, collection cards and city-level maps are done. Still to do:
   - a date timeline
   - camera/lens and tag filters
   - paging for large libraries

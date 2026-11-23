@@ -1,47 +1,33 @@
 <script lang="ts">
-  import type { PublicCollection, PublicPhoto, PublicPlace } from '@showcase/shared';
+  import type { PublicCollection, PublicPlace } from '@showcase/shared';
   import { plural } from './api';
   import { href, link } from './router';
 
   let {
     siteTitle,
     collections,
-    featured,
     places,
-    onopen,
   }: {
     siteTitle: string;
     collections: PublicCollection[];
-    featured: PublicPhoto[];
     places: PublicPlace[];
-    onopen: (id: string) => void;
   } = $props();
+
+  // 4+ photos: 2×2 grid; 2–3: two side by side; 1: one image.
+  const tiles = (c: PublicCollection) => c.covers.slice(0, c.covers.length >= 4 ? 4 : c.covers.length >= 2 ? 2 : 1);
 </script>
 
 <h1 class="title">{siteTitle}</h1>
 
-{#if featured.length}
-  <section aria-labelledby="highlights">
-    <h2 id="highlights">Highlights</h2>
-    <ul class="strip">
-      {#each featured as p (p.id)}
-        <li>
-          <button class="shot" onclick={() => onopen(p.id)} aria-label={`Open photo${p.caption ? `: ${p.caption}` : ''}`}>
-            <img src={p.src.thumb} alt={p.caption ?? ''} width={p.width} height={p.height} loading="lazy" decoding="async" />
-          </button>
-        </li>
-      {/each}
-    </ul>
-  </section>
-{/if}
-
-<section aria-labelledby="albums">
-  <h2 id="albums">Albums</h2>
+<section aria-labelledby="collections">
+  <h2 id="collections">Collections</h2>
   <ul class="cards">
     {#each collections as c (c.id)}
       <li>
         <a class="card" href={href({ view: 'collection', id: c.slug ?? c.id })} use:link>
-          <span class="cover">{#if c.cover}<img src={c.cover} alt="" loading="lazy" decoding="async" />{/if}</span>
+          <span class="cover tiles-{tiles(c).length}">
+            {#each tiles(c) as src (src)}<img {src} alt="" loading="lazy" decoding="async" />{/each}
+          </span>
           <span class="text">
             <span class="name">{c.title}</span>
             <span class="count">{plural(c.count, 'photo')}</span>
@@ -78,19 +64,6 @@
   section { margin-bottom: 2.5rem; }
   h2 { font-size: 1.35rem; margin-bottom: 0.75rem; }
 
-  .strip {
-    list-style: none; margin: 0; padding: 0 0 0.75rem;
-    display: flex; gap: 0.75rem; overflow-x: auto; scroll-snap-type: x mandatory;
-    overscroll-behavior-x: contain;
-  }
-  .strip li { flex: none; scroll-snap-align: start; }
-  .shot {
-    display: block; padding: 0; border: 0; border-radius: var(--radius); overflow: hidden;
-    background: var(--surface); cursor: zoom-in;
-    height: 14rem;
-  }
-  .shot img { height: 100%; width: auto; display: block; object-fit: cover; max-width: 85vw; }
-
   .cards {
     list-style: none; margin: 0; padding: 0;
     display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
@@ -101,9 +74,14 @@
     background: var(--bg); color: var(--fg); text-decoration: none;
   }
   .card:hover { border-color: var(--fg); }
-  /* overflow: hidden stops a tall photo from stretching the 4:3 box */
-  .cover { display: block; aspect-ratio: 4 / 3; overflow: hidden; background: var(--surface); }
-  .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* A 4:3 box of up to four photos. overflow: hidden stops tall photos stretching it. */
+  .cover {
+    display: grid; gap: 0.2rem; aspect-ratio: 4 / 3; overflow: hidden;
+    background: var(--surface);
+  }
+  .cover.tiles-2 { grid-template-columns: 1fr 1fr; }
+  .cover.tiles-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .cover img { width: 100%; height: 100%; min-height: 0; object-fit: cover; display: block; }
   .text { display: grid; gap: 0.15rem; padding: 0.9rem 1rem 1rem; }
   .name { font-size: 1.2rem; font-weight: 700; }
   .count { color: var(--muted); }
@@ -119,6 +97,5 @@
   }
   @media (max-width: 40rem) {
     .title { font-size: 1.6rem; }
-    .shot { height: 11rem; }
   }
 </style>

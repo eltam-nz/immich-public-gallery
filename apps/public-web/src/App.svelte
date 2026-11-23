@@ -13,7 +13,8 @@
   let collections = $state<PublicCollection[] | null>(null);
   let places = $state<PublicPlace[]>([]);
   let photos = $state<PublicPhoto[]>([]);
-  let featured = $state<PublicPhoto[]>([]);
+  // Places of the open collection, for its small map.
+  let collectionPlaces = $state<PublicPlace[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   // Whether the viewer was opened by us (so Close can use the Back history).
@@ -39,7 +40,8 @@
       : r.view === 'place' ? api.photos({ place: r.id })
       : r.view === 'all' || homeGrid ? api.photos()
       : Promise.resolve([] as PublicPhoto[]);
-    if (r.view === 'home') api.photos({ featured: true }).then((f) => (featured = f)).catch(() => {});
+    collectionPlaces = [];
+    if (r.view === 'collection') api.places(r.id).then((p) => (collectionPlaces = p)).catch(() => {});
     wanted
       .then((p) => (photos = p))
       .catch((e: Error) => (error = e.message))
@@ -63,8 +65,8 @@
     document.title = route.view === 'home' ? siteTitle : `${heading} · ${siteTitle}`;
   });
 
-  // The list the viewer steps through: the page's photos, or the featured strip on home.
-  const viewerList = $derived(route.view === 'home' && !isHomeGrid ? featured : photos);
+  // The list the viewer steps through: the current page's photos.
+  const viewerList = $derived(photos);
   const openIndex = $derived(loc.photo ? viewerList.findIndex((p) => p.id === loc.photo) : -1);
 
   function openPhoto(id: string) {
@@ -90,6 +92,7 @@
 
   // The map (and Leaflet) is only downloaded when the Map page is opened.
   const loadMap = () => import('./lib/MapView.svelte');
+  const loadCollectionMap = () => import('./lib/CollectionMap.svelte');
 </script>
 
 <a class="skip visually-hidden" href="#main">Skip to content</a>
@@ -102,7 +105,7 @@
 
 <main id="main">
   {#if route.view === 'home' && !isHomeGrid}
-    <Home {siteTitle} collections={collections ?? []} {featured} {places} onopen={openPhoto} />
+    <Home {siteTitle} collections={collections ?? []} {places} />
   {:else if route.view === 'map'}
     <div class="page-head">
       <h1>Map</h1>
@@ -119,6 +122,11 @@
       {#if !loading && !error}<p class="sub">{plural(photos.length, 'photo')}</p>{/if}
       {#if collection?.description}<p class="desc">{collection.description}</p>{/if}
     </div>
+    {#if route.view === 'collection' && collectionPlaces.length}
+      {#await loadCollectionMap() then m}
+        <m.default places={collectionPlaces} />
+      {/await}
+    {/if}
     {#if error}
       <p class="status">Sorry, the photos couldn't be loaded. Please try again later.</p>
     {:else if loading && photos.length === 0}

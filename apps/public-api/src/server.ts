@@ -109,11 +109,19 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
   });
 
   // Places (cities) with visible photos. Coordinates are the city's own.
-  app.get('/api/places', async (): Promise<PublicPlace[]> => {
+  app.get<{ Querystring: { collection?: string } }>('/api/places', async (req, reply): Promise<PublicPlace[]> => {
+    const collection = req.query.collection;
+    if (collection !== undefined && !COLLECTION_PARAM_RE.test(collection)) return reply.code(400).send({ error: 'bad_request' });
+    const inCollection = collection
+      ? sql`JOIN collection_photos fcp ON fcp.immich_asset_id = a.immich_asset_id
+            JOIN collections fc ON fc.id = fcp.collection_id AND fc.visible
+                 AND (fc.public_id = ${collection} OR fc.slug = ${collection})`
+      : sql``;
     const rows = await sql<(Omit<PublicPlace, 'cover'> & { cover_id: string; cover_version: string })[]>`
       WITH v AS (
         SELECT a.public_id, a.cached_version, a.taken_at, ${sql.unsafe(EFFECTIVE_PLACE)} AS place
         FROM assets a
+        ${inCollection}
         LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
         WHERE a.cached_version IS NOT NULL AND COALESCE(pm.visible, true)
       )
@@ -135,27 +143,52 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
     return toPublicPhoto(row);
   });
 
-  // Visible collections that contain at least one visible photo.
+  // Visible collections that contain at least one visible photo, each with up to
+  // four cover tiles: one random photo from each quarter of the collection (by
+  // date), so the tiles span the whole collection and change between visits.
+  // A cover chosen in the admin app is always included, first.
   app.get('/api/collections', async (): Promise<PublicCollection[]> => {
-    const rows = await sql<(Omit<PublicCollection, 'cover'> & { cover_id: string | null; cover_version: string | null })[]>`
-      SELECT c.public_id AS id, c.slug, c.title, c.description,
+    const rows = await sql<(Omit<PublicCollection, 'covers'> & { pk: number; cover_id: string | null; cover_version: string | null })[]>`
+      SELECT c.id AS pk, c.public_id AS id, c.slug, c.title, c.description,
              COUNT(a.public_id)::int AS count,
-             COALESCE(ca.public_id, (ARRAY_AGG(a.public_id ORDER BY cp.sort NULLS LAST, a.taken_at DESC))[1]) AS cover_id,
-             COALESCE(ca.cached_version, (ARRAY_AGG(a.cached_version ORDER BY cp.sort NULLS LAST, a.taken_at DESC))[1]) AS cover_version
+             ca.public_id AS cover_id, ca.cached_version AS cover_version
       FROM collections c
       JOIN collection_photos cp ON cp.collection_id = c.id
       JOIN assets a ON a.immich_asset_id = cp.immich_asset_id AND a.cached_version IS NOT NULL
       LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
-      -- Explicit cover, only if it is itself published and visible.
+      -- Explicit cover, only if it is itself published, visible and still in the collection.
       LEFT JOIN assets ca ON ca.immich_asset_id = c.cover_asset_id AND ca.cached_version IS NOT NULL
+           AND EXISTS (SELECT 1 FROM collection_photos ccp WHERE ccp.collection_id = c.id AND ccp.immich_asset_id = ca.immich_asset_id)
            AND NOT EXISTS (SELECT 1 FROM photos_meta cpm WHERE cpm.immich_asset_id = ca.immich_asset_id AND NOT cpm.visible)
       WHERE c.visible AND COALESCE(pm.visible, true)
       GROUP BY c.id, ca.public_id, ca.cached_version
       ORDER BY c.sort, c.title`;
-    return rows.map(({ cover_id, cover_version, ...c }) => ({
-      ...c,
-      cover: cover_id && cover_version ? imageUrl(cover_id, cover_version, 'thumb') : null,
-    }));
+    const picks = await sql<{ pk: number; public_id: string; cached_version: string }[]>`
+      WITH m AS (
+        SELECT cp.collection_id AS pk, a.public_id, a.cached_version,
+               ntile(4) OVER (PARTITION BY cp.collection_id ORDER BY a.taken_at NULLS LAST, a.public_id) AS q
+        FROM collection_photos cp
+        JOIN collections c ON c.id = cp.collection_id AND c.visible
+        JOIN assets a ON a.immich_asset_id = cp.immich_asset_id AND a.cached_version IS NOT NULL
+        LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
+        WHERE COALESCE(pm.visible, true)
+      )
+      SELECT pk, public_id, cached_version FROM (
+        SELECT DISTINCT ON (pk, q) pk, q, public_id, cached_version FROM m ORDER BY pk, q, random()
+      ) x ORDER BY pk, q`;
+    const byCollection = new Map<number, { id: string; version: string }[]>();
+    for (const p of picks) {
+      const list = byCollection.get(p.pk) ?? [];
+      list.push({ id: p.public_id, version: p.cached_version });
+      byCollection.set(p.pk, list);
+    }
+    return rows.map(({ pk, cover_id, cover_version, ...c }) => {
+      let tiles = byCollection.get(pk) ?? [];
+      if (cover_id && cover_version) {
+        tiles = [{ id: cover_id, version: cover_version }, ...tiles.filter((t) => t.id !== cover_id)];
+      }
+      return { ...c, covers: tiles.slice(0, 4).map((t) => imageUrl(t.id, t.version, 'thumb')) };
+    });
   });
 
   // /img/<publicId>/<version>/<size>.webp — served only from the local cache.
