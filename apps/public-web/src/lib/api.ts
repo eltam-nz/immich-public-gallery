@@ -1,4 +1,4 @@
-import type { PublicCollection, PublicPhoto, PublicPlace, SiteInfo } from '@showcase/shared';
+import type { PublicCollection, PublicFeatured, PublicPhoto, PublicPlace, SiteInfo } from '@showcase/shared';
 
 const cache = new Map<string, Promise<unknown>>();
 
@@ -19,6 +19,7 @@ function get<T>(path: string): Promise<T> {
 export const api = {
   site: () => get<SiteInfo>('/api/site'),
   collections: () => get<PublicCollection[]>('/api/collections'),
+  featured: () => get<PublicFeatured>('/api/featured'),
   places: (collection?: string) =>
     get<PublicPlace[]>(collection ? `/api/places?collection=${encodeURIComponent(collection)}` : '/api/places'),
   photos: (filter: { collection?: string; place?: string; featured?: boolean } = {}) => {
@@ -32,3 +33,27 @@ export const api = {
 };
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** "12 photos · 2 videos", "12 photos" or "2 videos" from a total and its videos. */
+export const mediaCount = (total: number, videos = 0) =>
+  [total - videos > 0 || videos === 0 ? plural(total - videos, 'photo') : '', videos ? plural(videos, 'video') : '']
+    .filter(Boolean)
+    .join(' · ');
+
+const monthYear = (d: Date) => d.toLocaleDateString(undefined, { month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+/** "Jun 2024", "Jun – Aug 2024" or "Jun 2024 – Jan 2025" for a YYYY-MM-DD range. */
+export function formatRange(r: { from: string; to: string } | null): string | null {
+  if (!r) return null;
+  const a = new Date(`${r.from}T00:00:00Z`);
+  const b = new Date(`${r.to}T00:00:00Z`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
+  if (a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth()) return monthYear(a);
+  if (a.getUTCFullYear() === b.getUTCFullYear()) {
+    return `${a.toLocaleDateString(undefined, { month: 'short', timeZone: 'UTC' })} – ${monthYear(b)}`;
+  }
+  return `${monthYear(a)} – ${monthYear(b)}`;
+}
+
+/** The larger version of a thumbnail URL (for hero images). */
+export const previewOf = (thumbUrl: string) => thumbUrl.replace(/\/thumb\.webp$/, '/preview.webp');

@@ -51,6 +51,18 @@ export interface PublicCollection {
    * each quarter of the collection (by date); an admin-chosen cover comes first.
    */
   covers: string[];
+  /** How many of `count` are videos. */
+  videos: number;
+  /** Earliest and latest photo dates (YYYY-MM-DD), or null if undated. */
+  dateRange: { from: string; to: string } | null;
+}
+
+/** The "Featured photography" section: photos ticked Featured in the admin app. */
+export interface PublicFeatured {
+  count: number;
+  videos: number;
+  dateRange: { from: string; to: string } | null;
+  covers: string[];
 }
 
 export interface CollectionRef {
@@ -61,6 +73,9 @@ export interface CollectionRef {
 
 export interface PublicPhoto {
   id: string;
+  type: 'image' | 'video';
+  /** For videos: the 720p file and its length. Thumbnails/previews are the poster frame. */
+  video: { src: string; duration: number | null } | null;
   width: number;
   height: number;
   /** Local capture time without zone, e.g. "2024-06-01T14:03:22". */
@@ -168,6 +183,8 @@ export interface PhotoRow {
   featured: boolean | null;
   /** Effective city-level place (already resolved: auto / chosen / hidden). */
   place: PlaceRef | null;
+  media_type?: 'image' | 'video';
+  duration_ms?: number | null;
   custom: Record<string, unknown> | null;
 }
 
@@ -183,8 +200,11 @@ export function toPublicPhoto(row: PhotoRow): PublicPhoto {
   if (m.iso !== undefined) exposure.iso = m.iso;
   if (m.focalLength !== undefined) exposure.focalLength = m.focalLength;
 
+  const isVideo = row.media_type === 'video';
   return {
     id: row.public_id,
+    type: isVideo ? 'video' : 'image',
+    video: isVideo ? { src: videoUrl(row.public_id, row.version), duration: row.duration_ms ?? null } : null,
     width: row.width,
     height: row.height,
     takenAt: row.taken_at,
@@ -202,6 +222,21 @@ export function toPublicPhoto(row: PhotoRow): PublicPhoto {
   };
 }
 
+/** URL of a video's 720p file. */
+export function videoUrl(publicId: string, version: string): string {
+  return `/video/${publicId}/${version}.mp4`;
+}
+
+/** "0:42", "12:05" or "1:02:03" from milliseconds. */
+export function formatDuration(ms: number | null | undefined): string {
+  if (!ms || ms < 0) return '';
+  const t = Math.round(ms / 1000);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const sec = String(t % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}
+
 /** Image URL for a cached size. Shared by the public API and the admin app. */
 export function imageUrl(publicId: string, version: string, size: 'thumb' | 'preview'): string {
   return `/img/${publicId}/${version}/${size}.webp`;
@@ -211,6 +246,19 @@ export function imageUrl(publicId: string, version: string, size: 'thumb' | 'pre
 
 export interface AdminPhoto {
   id: string;
+  type: 'image' | 'video';
+  /** Video length in ms (videos only). */
+  duration: number | null;
+  /** Videos: ready (published), processing (being re-encoded) or failed. */
+  videoStatus: 'ready' | 'processing' | 'failed' | null;
+  videoError: string | null;
+  /** Size of the file from Immich, and of the published 720p file, in MB. */
+  sourceMB: number | null;
+  videoMB: number | null;
+  /** 720p file URL when ready (admin can play hidden ones too). */
+  videoSrc: string | null;
+  /** Large (over VIDEO_WARN_MB) or failed. */
+  videoWarning: string | null;
   width: number;
   height: number;
   takenAt: string | null;
@@ -259,6 +307,8 @@ export interface AdminStatus {
     immichVersion: string | null;
   } | null;
   counts: { photos: number; hidden: number; collections: number };
+  videos: { ready: number; processing: number; failed: number; large: number };
+  videoWarnMB: number;
   publicSiteUrl: string | null;
 }
 

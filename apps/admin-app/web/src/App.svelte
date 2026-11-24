@@ -97,7 +97,9 @@
   .top {
     display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
     padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
-    border-bottom: 1px solid var(--border); background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+    -webkit-backdrop-filter: saturate(1.4) blur(12px); backdrop-filter: saturate(1.4) blur(12px);
     position: sticky; top: 0; z-index: 10;
   }
   .title { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
@@ -107,7 +109,9 @@
   .tabs button {
     border: 0; background: transparent; padding: 6px 12px; border-radius: 8px; cursor: pointer; min-height: var(--tap);
   }
-  .tabs button.active { background: var(--accent); color: var(--accent-fg); }
+  .tabs { background: var(--surface-2); padding: 4px; border-radius: 999px; }
+  .tabs button { border-radius: 999px; color: var(--muted); font-weight: 500; }
+  .tabs button.active { background: var(--surface); color: var(--fg); box-shadow: var(--shadow); }
   .site { color: inherit; font-size: 14px; }
   .who { margin-left: auto; font-size: 13px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); margin-left: 6px; vertical-align: middle; }
@@ -135,6 +139,7 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 12px;
   }
   .tabbar button.active { color: var(--fg); font-weight: 600; }
-  .ico { position: relative; display: inline-flex; }
-  .badge { position: absolute; top: -2px; right: -6px; margin: 0; }
+  .ico { position: relative; display: inline-flex; padding: 3px 18px; border-radius: 999px; }
+  .tabbar button.active .ico { background: var(--accent-soft); color: var(--accent-strong); }
+  .badge { position: absolute; top: 0; right: 10px; margin: 0; }
 </style>

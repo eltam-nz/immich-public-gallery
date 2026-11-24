@@ -44,7 +44,7 @@ export const api = {
   updatePhoto: (id: string, patch: PhotoPatch) => call<AdminPhoto>('PATCH', `/api/photos/${id}`, patch),
   bulk: (body: {
     ids: string[];
-    set?: { visible?: boolean; featured?: boolean };
+    set?: { visible?: boolean; featured?: boolean; caption?: string | null };
     location?: LocationChoice;
     addTo?: string;
     removeFrom?: string;

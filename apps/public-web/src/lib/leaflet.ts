@@ -9,7 +9,7 @@ export { L };
 export const MARKER_STYLE = {
   color: '#ffffff',
   weight: 3,
-  fillColor: '#0b3d91',
+  fillColor: '#166534',
   fillOpacity: 0.85,
 } as const;
 

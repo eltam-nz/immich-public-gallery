@@ -87,7 +87,7 @@
 
 <style>
   .picker { display: grid; gap: 6px; }
-  .picker.framed { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 10px; margin: 8px 0; }
+  .picker.framed { border: 1px solid var(--border); background: var(--surface); border-radius: 12px; padding: 10px; margin: 8px 0; }
   .label { margin: 8px 0 0; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
   ul { list-style: none; margin: 0; padding: 0; }
   .framed ul { max-height: 240px; overflow-y: auto; }

@@ -4,6 +4,7 @@ import { loadConfig } from './config.js';
 import { connect } from './db.js';
 import { buildServer } from './server.js';
 import { Syncer } from './sync.js';
+import { VideoWorker } from './video.js';
 
 const cfg = loadConfig();
 loadGazetteer(); // load city data at startup, not during the first sync
@@ -11,6 +12,9 @@ await mkdir(cfg.CACHE_DIR, { recursive: true });
 const sql = connect(cfg.DATABASE_URL);
 const app = await buildServer(cfg, sql);
 const syncer = new Syncer(cfg, sql, app.log);
+// Videos are re-encoded in the background after each sync, one at a time.
+const videos = new VideoWorker(cfg, sql, app.log, (id) => syncer.assetKeys.get(id));
+syncer.onSynced = () => videos.kick();
 
 const runSync = () => syncer.run().catch((err) => app.log.error({ err }, 'sync crashed'));
 await app.listen({ host: '0.0.0.0', port: cfg.PORT });

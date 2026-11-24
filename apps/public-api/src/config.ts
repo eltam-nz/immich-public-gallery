@@ -10,6 +10,8 @@ const schema = z.object({
   /** Secret used to derive opaque public IDs. Changing it changes every public URL. */
   PUBLIC_ID_SECRET: z.string().min(32, 'PUBLIC_ID_SECRET must be at least 32 characters'),
   SYNC_INTERVAL_MINUTES: z.coerce.number().min(1).default(15),
+  /** ffmpeg threads per video encode (keep low so the server stays responsive). */
+  VIDEO_THREADS: z.coerce.number().int().min(1).max(32).default(2),
   CACHE_DIR: z.string().default('/cache'),
   SITE_TITLE: z.string().default('Photos'),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(600),

@@ -16,6 +16,7 @@ export BACKUP_KEEP=2
 export SHARED_LINK_KEYS=test-shared-link-key SYNC_INTERVAL_MINUTES=60 SITE_TITLE="E2E Photos"
 DC="docker compose -f docker-compose.yml -f docker-compose.test.yml"
 
+command -v ffmpeg >/dev/null || { echo "ffmpeg is needed to make the test video (e.g. apt install ffmpeg)"; exit 1; }
 node test/mock-immich/make-fixtures.mjs >/dev/null
 docker network inspect "$IMMICH_NETWORK" >/dev/null 2>&1 || docker network create "$IMMICH_NETWORK" >/dev/null
 $DC down -v --remove-orphans >/dev/null 2>&1 || true
@@ -32,14 +33,17 @@ trap cleanup EXIT
 WEB=http://127.0.0.1:8088
 fail() { echo "FAIL: $*"; $DC logs public-api | tail -30; exit 1; }
 pass() { echo "ok   $*"; }
-count() { curl -fsS $WEB/api/photos 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).length)}catch{console.log(-1)}})' || echo -1; }
+jq_() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const d=JSON.parse(s);console.log($1)})"; }
+# Published photos (videos are checked separately).
+count() { curl -fsS $WEB/api/photos 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).filter(p=>p.type==="image").length)}catch{console.log(-1)}})' || echo -1; }
+videos() { curl -fsS $WEB/api/photos 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.stringify(JSON.parse(s).filter(p=>p.type==="video")))}catch{console.log("[]")}})' || echo '[]'; }
 
 for i in $(seq 1 60); do
   n=$(count)
   [ "$n" = 3 ] && break; sleep 1
 done
-[ "$n" = 3 ] || fail "expected 3 photos (videos excluded), got $n"
-pass "sync: 3 images published, video skipped"
+[ "$n" = 3 ] || fail "expected 3 photos, got $n"
+pass "sync: 3 photos published"
 
 # Data lives in bind mounts under DATA_DIR (stat works without read access to the folders).
 [ "$(stat -c %u "$DATA_DIR/postgres")" = 70 ] || fail "postgres data not in $DATA_DIR/postgres"
@@ -82,15 +86,35 @@ calls=$(curl -fsS http://127.0.0.1:2283/__control/requests)
 echo "$calls" | node -e '
 let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
   const ok=[/^GET \/api\/shared-links\/me$/,/^GET \/api\/albums\/[0-9a-f-]{36}$/,/^GET \/api\/assets\/[0-9a-f-]{36}\/thumbnail\?size=preview$/,
-    /^GET \/api\/timeline\/buckets$/,/^GET \/api\/timeline\/bucket$/,/^GET \/api\/assets\/[0-9a-f-]{36}$/,/^GET \/api\/server\/version$/];
+    /^GET \/api\/timeline\/buckets$/,/^GET \/api\/timeline\/bucket$/,/^GET \/api\/assets\/[0-9a-f-]{36}$/,/^GET \/api\/server\/version$/,
+    /^GET \/api\/assets\/[0-9a-f-]{36}\/video\/playback$/];
   const bad=JSON.parse(s).filter(r=>!ok.some(re=>re.test(r)));
   if(bad.length){console.error("unexpected Immich calls:",bad);process.exit(1)}})' || fail "public-api called non-allowlisted Immich endpoints"
 pass "public-api only called allowlisted Immich endpoints"
 
+# ---------------- Videos ----------------
+# The good video is re-encoded in the background; the corrupt one never publishes.
+for i in $(seq 1 120); do v=$(videos); [ "$(echo "$v" | jq_ 'd.length')" = 1 ] && break; sleep 1; done
+[ "$(echo "$v" | jq_ 'd.length')" = 1 ] || fail "expected 1 published video, got: $v $($DC logs public-api 2>&1 | grep -i video | tail -3)"
+VSRC=$(echo "$v" | jq_ 'd[0].video.src'); VDUR=$(echo "$v" | jq_ 'd[0].video.duration')
+[ "$VDUR" = 3000 ] || fail "video duration $VDUR"
+echo "$VSRC" | grep -qE '^/video/[A-Za-z0-9_-]{16}/[a-f0-9]{12}\.mp4$' || fail "video src $VSRC"
+VFILE=$(mktemp); curl -fsS -o "$VFILE" "$WEB$VSRC" || fail "video not served"
+hdr=$(curl -s -D - -o /dev/null -H 'Range: bytes=0-99' "$WEB$VSRC")
+echo "$hdr" | grep -q '^HTTP/1.1 206' && echo "$hdr" | grep -qi '^content-range: bytes 0-99/' || fail "no Range support: $hdr"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Range: bytes=999999999-' "$WEB$VSRC")" = 416 ] || fail "bad range not 416"
+probe=$($DC exec -T public-api ffprobe -v error -show_entries format_tags:stream_tags:stream=codec_name,height:stream_side_data -of json -i pipe:0 < "$VFILE")
+echo "$probe" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);
+  const v=j.streams.find(x=>x.codec_name==="h264"), a=j.streams.find(x=>x.codec_name==="aac");
+  const text=JSON.stringify(j);
+  const bad=/location|ISO6709|creation_time|"make"|"model"|apple|iphone|rotate|displaymatrix|51\.50/i.test(text);
+  if(!v||!a||v.height!==720||bad){console.error(text);process.exit(1)}})' || fail "served video not 720p H.264/AAC without metadata"
+rm -f "$VFILE"
+pass "videos: re-encoded to 720p H.264/AAC, metadata stripped, served with Range support"
+
 # ---------------- Admin app ----------------
 ADMIN=http://127.0.0.1:8089
 MOCK=http://127.0.0.1:2283
-jq_() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const d=JSON.parse(s);console.log($1)})"; }
 token() { curl -fsS "$MOCK/__control/sign?$1"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 TOKEN=$(token "email=admin@example.com")
@@ -107,11 +131,26 @@ curl -fsS "${AUTH[@]}" $ADMIN/api/status | grep -q '"email":"admin@example.com"'
 curl -fsS "${AUTH[@]}" $ADMIN/ | grep -q '<div id="app">' || fail "admin UI not served"
 pass "admin: Cloudflare Access token required (audience, expiry, email checked)"
 
+# Admin sees both videos: the good one ready (with a size warning, as the test
+# threshold is 1 MB) and the corrupt one failed, unpublished.
+av=$(curl -fsS "${AUTH[@]}" $ADMIN/api/photos | jq_ 'JSON.stringify(d.filter(p=>p.type==="video").map(p=>({s:p.videoStatus,w:p.videoWarning,src:p.videoSrc,id:p.id})))')
+echo "$av" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);
+  const ok=v.length===2 && v.some(x=>x.s==="ready"&&/Large video/.test(x.w||"")&&x.src) && v.some(x=>x.s==="failed"&&/process/.test(x.w||"")&&!x.src);
+  if(!ok){console.error(s);process.exit(1)}})' || fail "admin video status/warnings: $av"
+GOODV=$(echo "$av" | jq_ 'd.find(x=>x.s==="ready").id'); GSRC=$(echo "$av" | jq_ 'd.find(x=>x.s==="ready").src')
+[ "$(code "${AUTH[@]}" -H 'Range: bytes=0-9' $ADMIN$GSRC)" = 206 ] || fail "admin cannot play video"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$GOODV\"],\"set\":{\"visible\":false}}" $ADMIN/api/photos/bulk >/dev/null
+[ "$(videos | jq_ 'd.length')" = 0 ] && [ "$(code $WEB$GSRC)" = 404 ] || fail "hidden video still public"
+[ "$(code "${AUTH[@]}" $ADMIN$GSRC)" = 200 ] || fail "admin cannot see hidden video"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$GOODV\"],\"set\":{\"visible\":true}}" $ADMIN/api/photos/bulk >/dev/null
+curl -fsS "${AUTH[@]}" $ADMIN/api/status | grep -q '"videos":{"ready":1,"processing":0,"failed":1,"large":1}' || fail "admin video counts: $(curl -fsS "${AUTH[@]}" $ADMIN/api/status)"
+pass "admin: video status, size warning, failed encode, hiding a video"
+
 [ "$(code -X POST "${AUTH[@]}" -H 'content-type: application/json' -d '{}' $ADMIN/api/sync)" = 403 ] || fail "mutation without CSRF header accepted"
 [ "$(code -X POST "${AUTH[@]}" "${W[@]}" -H 'sec-fetch-site: cross-site' -d '{}' $ADMIN/api/sync)" = 403 ] || fail "cross-site mutation accepted"
 pass "admin: changes need the CSRF header and a same-origin request"
 
-ids=$(curl -fsS "${AUTH[@]}" $ADMIN/api/photos | jq_ 'd.map(p=>p.id).join(" ")')
+ids=$(curl -fsS "${AUTH[@]}" $ADMIN/api/photos | jq_ 'd.filter(p=>p.type==="image").map(p=>p.id).join(" ")')
 read -r P1 P2 P3 <<<"$ids"
 [ -n "$P3" ] || fail "admin photo list: $ids"
 COLL=$(curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d '{"title":"Holiday","slug":"holiday","description":"Trip"}' $ADMIN/api/collections | jq_ 'd.id')
@@ -144,6 +183,26 @@ curl -fsS -X PUT "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$C2\",\"$COLL\"]}" $ADMI
 [ "$(code -X PUT "${AUTH[@]}" "${W[@]}" -d '{"ids":["../x"]}' $ADMIN/api/collections/order)" = 400 ] || fail "bad order body accepted"
 curl -fsS -X DELETE "${AUTH[@]}" -H "x-showcase-admin: 1" $ADMIN/api/collections/$C2 >/dev/null
 pass "collections: reorder saves the whole order at once"
+# Featured photography: photos ticked Featured, with tiles and a date range.
+[ "$(curl -fsS $WEB/api/featured | jq_ 'd.count')" = 0 ] || fail "featured not empty at start"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P1\",\"$P2\"],\"set\":{\"featured\":true}}" $ADMIN/api/photos/bulk >/dev/null
+feat=$(curl -fsS $WEB/api/featured)
+echo "$feat" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const f=JSON.parse(s);const ids=process.argv.slice(1);
+  const ok=f.count===2 && f.covers.length===2 && f.covers.every(u=>ids.includes(u.split("/")[2])) && f.dateRange && /^\d{4}-\d{2}-\d{2}$/.test(f.dateRange.from);
+  if(!ok){console.error(s);process.exit(1)}})' "$P1" "$P2" || fail "featured summary: $feat"
+[ "$(curl -fsS "$WEB/api/photos?featured=1" | jq_ 'd.length')" = 2 ] || fail "featured photos list"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P2\"],\"set\":{\"visible\":false}}" $ADMIN/api/photos/bulk >/dev/null
+[ "$(curl -fsS $WEB/api/featured | jq_ 'd.count')" = 1 ] || fail "hidden photo counted as featured"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P1\",\"$P2\"],\"set\":{\"featured\":false,\"visible\":true}}" $ADMIN/api/photos/bulk >/dev/null
+curl -fsS $WEB/api/collections | jq_ 'd.find(c=>c.slug==="holiday").dateRange.from' | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || fail "collection date range"
+pass "featured photography: only featured, visible photos; collections have date ranges"
+
+# Copy one caption to a group (bulk), then clear it.
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P2\",\"$P3\"],\"set\":{\"caption\":\"  Shared caption  \"}}" $ADMIN/api/photos/bulk >/dev/null
+[ "$(curl -fsS "$WEB/api/photos" | jq_ 'd.filter(p=>p.caption==="Shared caption").length')" = 2 ] || fail "bulk caption"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P2\",\"$P3\"],\"set\":{\"caption\":\"\"}}" $ADMIN/api/photos/bulk >/dev/null
+[ "$(curl -fsS "$WEB/api/photos" | jq_ 'd.filter(p=>p.caption==="Shared caption").length')" = 0 ] || fail "bulk caption clear"
+pass "captions: one caption copied to a group, and cleared"
 [ "$(curl -fsS "$WEB/api/photos?collection=holiday" | jq_ 'd.length')" = 2 ] || fail "public collection filter"
 p1=$(curl -fsS $WEB/api/photos/$P1)
 echo "$p1" | grep -q '"caption":"Hello world"' && echo "$p1" | grep -q '"title":"Holiday"' || fail "public photo edits: $p1"
@@ -214,7 +273,9 @@ sleep 1
 $DC exec -T backup backup.sh once >/dev/null || fail "backup.sh once (2)"
 [ "$(dumps | wc -l)" = 2 ] || fail "retention: expected 2 dumps with BACKUP_KEEP=2, got: $(dumps)"
 [ "$(stat -c %u "$BK" "$(dumps | head -1)" | sort -u)" = 1000 ] || fail "backups not owned by uid 1000"
-$DC exec -T backup pg_restore --list "/backups/$(basename "$(dumps | head -1)")" | grep -q "TABLE DATA public collections" || fail "dump missing collections data"
+# Capture first: grep -q exiting early would break the pipe and, with pipefail, fail the check.
+TOC=$($DC exec -T backup pg_restore --list "/backups/$(basename "$(dumps | head -1)")")
+grep -q "TABLE DATA public collections" <<<"$TOC" || fail "dump missing collections data"
 $DC exec -T backup backup.sh check || fail "backup healthcheck"
 ls "$BK" | grep -q '\.tmp$' && fail "temp file left behind"
 pass "backups: automatic + on demand, verified, pruned to BACKUP_KEEP, owned by uid 1000"

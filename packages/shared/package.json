@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/range.d.ts",
+      "default": "./dist/node/range.js"
     }
   },
   "scripts": {
@@ -17,6 +21,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@types/node": "^22.16.0",
     "typescript": "~5.8.3",
     "vitest": "^3.2.4"
   },

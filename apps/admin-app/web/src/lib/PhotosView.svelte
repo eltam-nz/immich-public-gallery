@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AdminCollection, AdminPhoto, AdminPlace, PlaceRef } from '@showcase/shared';
   import { untrack } from 'svelte';
+  import { formatDuration } from '@showcase/shared';
   import { api, type LocationChoice } from './api';
   import PhotoEditor from './PhotoEditor.svelte';
   import PlacePicker from './PlacePicker.svelte';
@@ -22,10 +23,14 @@
   let selecting = $state(false); // phone "Select" mode: taps tick photos instead of opening them
   let lastIndex = -1;
   let busy = $state(false);
-  let sheet = $state<null | 'actions' | 'place'>(null);
+  let sheet = $state<null | 'actions' | 'place' | 'caption'>(null);
+  let bulkCaption = $state('');
+  // Phone: after "Copy from a photo…", the next tapped photo opens as the source
+  // (the selection is kept, so its editor can copy to the selected photos).
+  let pickSource = $state(false);
   let bulkCollection = $state('');
   let pickingPlace = $state(false); // desktop inline picker
-  const FIXED_FILTERS = ['all', 'hidden', 'featured', 'none', 'noplace'];
+  const FIXED_FILTERS = ['all', 'hidden', 'featured', 'none', 'noplace', 'videos', 'videowarn'];
 
   const visiblePhotos = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -34,6 +39,8 @@
       if (filter === 'featured' && !p.featured) return false;
       if (filter === 'none' && p.collections.length) return false;
       if (filter === 'noplace' && p.effectivePlace) return false;
+      if (filter === 'videos' && p.type !== 'video') return false;
+      if (filter === 'videowarn' && !p.videoWarning) return false;
       if (!FIXED_FILTERS.includes(filter) && !p.collections.includes(filter)) return false;
       if (!q) return true;
       return [p.caption, p.description, p.effectivePlace?.name, p.camera, p.lens, ...p.tags]
@@ -59,6 +66,8 @@
   const editIndex = $derived(editing ? navList.indexOf(editing.id) : -1);
   const allShownSelected = $derived(visiblePhotos.length > 0 && visiblePhotos.every((p) => selected.has(p.id)));
   const showSelBar = $derived(media.phone && (selecting || selected.size > 0));
+  const shortDate = (t: string | null) =>
+    t ? new Date(`${t}Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : 'No date';
   const collectionTitle = (id: string) => collections.find((c) => c.id === id)?.title ?? '';
 
   // Reserve space for the phone selection bar; lock page scrolling under the phone editor.
@@ -94,6 +103,9 @@
     if (e.shiftKey && lastIndex >= 0) {
       const [a, b] = [Math.min(lastIndex, i), Math.max(lastIndex, i)];
       selected = new Set([...selected, ...visiblePhotos.slice(a, b + 1).map((x) => x.id)]);
+    } else if (pickSource) {
+      pickSource = false;
+      openPhoto(p.id);
     } else if (selecting || e.ctrlKey || e.metaKey) {
       toggle(p.id);
     } else {
@@ -103,7 +115,7 @@
   }
 
   async function bulk(
-    body: { set?: { visible?: boolean; featured?: boolean }; location?: LocationChoice; addTo?: string; removeFrom?: string },
+    body: { set?: { visible?: boolean; featured?: boolean; caption?: string | null }; location?: LocationChoice; addTo?: string; removeFrom?: string },
     done: string,
   ) {
     busy = true;
@@ -158,6 +170,17 @@
     </div>
   {/if}
   <div class="group" class:stacked>
+    {#if stacked}<h3>Caption</h3>{/if}
+    <div class="buttons">
+      <button class="btn" disabled={busy} onclick={() => { bulkCaption = ''; sheet = 'caption'; }}>Set caption…</button>
+      {#if stacked}
+        <button class="btn" disabled={busy} onclick={() => { sheet = null; pickSource = true; notify('Tap the photo to copy its caption or place from.'); }}>
+          Copy from a photo…
+        </button>
+      {/if}
+    </div>
+  </div>
+  <div class="group" class:stacked>
     {#if stacked}<h3>Location</h3>{/if}
     <div class="buttons">
       <button class="btn" disabled={busy} onclick={() => (stacked ? (sheet = 'place') : (pickingPlace = !pickingPlace))}>Set location…</button>
@@ -177,6 +200,10 @@
         <option value="featured">Featured ({photos.filter((p) => p.featured).length})</option>
         <option value="none">Not in a collection ({photos.filter((p) => !p.collections.length).length})</option>
         <option value="noplace">No location ({photos.filter((p) => !p.effectivePlace).length})</option>
+        {#if photos.some((p) => p.type === 'video')}
+          <option value="videos">Videos ({photos.filter((p) => p.type === 'video').length})</option>
+          <option value="videowarn">Videos with warnings ({photos.filter((p) => p.videoWarning).length})</option>
+        {/if}
         {#if collections.length}
           <optgroup label="Collections">
             {#each collections as c (c.id)}<option value={c.id}>{c.title} ({c.count})</option>{/each}
@@ -218,18 +245,30 @@
             <input type="checkbox" class="pick" checked={selected.has(p.id)} onchange={() => { toggle(p.id); lastIndex = i; }}
               aria-label={`Select photo ${i + 1}`} />
           {/if}
-          <button class="thumb" onclick={(e) => tileClick(e, p, i)}
-            aria-label={`${selecting ? (selected.has(p.id) ? 'Deselect' : 'Select') : 'Edit'} photo ${i + 1}${p.caption ? `: ${p.caption}` : ''}`}
+          <button class="thumb" onclick={(e) => tileClick(e, p, i)} title={p.videoWarning ?? undefined}
+            aria-label={`${selecting ? (selected.has(p.id) ? 'Deselect' : 'Select') : 'Edit'} ${p.type === 'video' ? 'video' : 'photo'} ${i + 1}${p.caption ? `: ${p.caption}` : ''}${p.videoWarning ? `. Warning: ${p.videoWarning}` : ''}`}
             aria-pressed={selecting ? selected.has(p.id) : undefined}>
             <img src={p.src.thumb} alt="" loading="lazy" decoding="async" />
+            {#if p.type === 'video'}
+              <span class="vid" aria-hidden="true">
+                {#if p.videoStatus === 'processing'}Processing…{:else if p.videoStatus === 'failed'}Not published{:else}▶ {formatDuration(p.duration)}{/if}
+              </span>
+            {/if}
             {#if selected.has(p.id)}<span class="tick" aria-hidden="true">✓</span>{/if}
           </button>
           <div class="badges" aria-hidden="true">
             {#if !p.visible}<span class="badge">Hidden</span>{/if}
             {#if p.featured}<span class="badge">★</span>{/if}
             {#if !p.effectivePlace}<span class="badge" title="No location">⌀</span>{/if}
+            {#if p.videoWarning}<span class="badge warn">⚠</span>{/if}
           </div>
-          {#if p.caption && !media.phone}<p class="cap">{p.caption}</p>{/if}
+          {#if !media.phone}
+            <div class="info" aria-hidden="true">
+              <span class="t" class:none={!p.caption}>{p.caption ?? 'No caption'}</span>
+              <span class="d">{shortDate(p.takenAt)}{p.effectivePlace ? ` · ${p.effectivePlace.name}` : ''}</span>
+              <span class="pen">✎</span>
+            </div>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -262,9 +301,29 @@
     <button class="btn wide" onclick={clearSelection}>Clear selection</button>
   </Sheet>
 {:else if sheet === 'place'}
-  <Sheet title="Set location" onclose={() => (sheet = 'actions')}>
+  <Sheet title="Set location" onclose={() => (sheet = media.phone ? 'actions' : null)}>
     <PlacePicker {galleryPlaces} framed={false} onpick={setPlace} />
   </Sheet>
+{:else if sheet === 'caption'}
+  <Sheet title={`Caption for ${selected.size} photo${selected.size === 1 ? '' : 's'}`} onclose={() => (sheet = media.phone ? 'actions' : null)}>
+    <form id="bulk-caption" onsubmit={(e) => { e.preventDefault(); bulk({ set: { caption: bulkCaption } }, bulkCaption.trim() ? 'Caption set' : 'Captions cleared'); }}>
+      <label class="field"><span>Caption</span>
+        <textarea bind:value={bulkCaption} maxlength="2000" placeholder="Leave empty to clear the captions"></textarea>
+      </label>
+      <p class="muted hint">Replaces the caption on every selected photo.</p>
+    </form>
+    {#snippet footer()}
+      <button class="btn" type="button" onclick={() => (sheet = media.phone ? 'actions' : null)}>Cancel</button>
+      <button class="btn primary" type="submit" form="bulk-caption" disabled={busy}>{bulkCaption.trim() ? 'Set caption' : 'Clear captions'}</button>
+    {/snippet}
+  </Sheet>
+{/if}
+
+{#if pickSource}
+  <div class="pickbanner" role="status">
+    Tap the photo to copy from
+    <button class="btn" onclick={() => (pickSource = false)}>Cancel</button>
+  </div>
 {/if}
 
 <style>
@@ -290,7 +349,20 @@
   li { position: relative; min-width: 0; }
   .thumb {
     display: block; position: relative; width: 100%; aspect-ratio: 1; padding: 0; border: 2px solid transparent;
-    border-radius: 6px; overflow: hidden; background: var(--border); cursor: pointer;
+    border-radius: 12px; overflow: hidden; background: var(--surface-2); cursor: pointer;
+  }
+  @media (min-width: 701px) {
+    .grid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+    li { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 6px; }
+    li.selected { box-shadow: 0 0 0 2px var(--focus), var(--shadow); }
+    .thumb { border-radius: 10px; }
+    .pick { top: 14px; left: 14px; }
+    .badges { top: 12px; right: 12px; }
+    .info { display: grid; grid-template-columns: 1fr auto; gap: 0 6px; padding: 6px 4px 2px; font-size: 12px; }
+    .info .t { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .info .t.none { color: var(--muted); font-weight: 400; font-style: italic; }
+    .info .d { grid-column: 1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .info .pen { grid-column: 2; grid-row: 1 / 3; align-self: center; color: var(--muted); font-size: 15px; }
   }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   li.hidden .thumb img { opacity: 0.35; }
@@ -305,7 +377,11 @@
   li:hover .pick, .pick:checked, .pick:focus-visible { opacity: 1; }
   .badges { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; pointer-events: none; }
   .badge { background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 999px; }
-  .cap { margin: 4px 0 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge.warn { background: #fbbf24; color: #111; font-weight: 700; }
+  .vid {
+    position: absolute; right: 6px; bottom: 6px; padding: 1px 7px; border-radius: 999px;
+    background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 11px; font-weight: 600;
+  }
 
   /* Bottom sheet action groups */
   .group.stacked { display: block; margin-bottom: 16px; }
@@ -313,6 +389,14 @@
   .group.stacked .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .group.stacked select { grid-column: 1 / -1; width: 100%; }
   .wide { width: 100%; }
+  .hint { font-size: 13px; margin: 0; }
+  .pickbanner {
+    position: fixed; left: 10px; right: 10px; z-index: 25; top: calc(64px + env(safe-area-inset-top));
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 8px 8px 8px 14px; border-radius: 12px; background: var(--accent); color: var(--accent-fg);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2); font-weight: 600;
+  }
+  .pickbanner .btn { background: var(--surface); color: var(--fg); }
 
   @media (max-width: 700px) {
     .toolbar { display: grid; grid-template-columns: 1fr auto; }

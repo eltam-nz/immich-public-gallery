@@ -42,6 +42,12 @@
     <div class="card"><span class="n">{status.counts.collections}</span><span class="muted">collections</span></div>
   </div>
 
+  {#if status.videos.ready + status.videos.processing + status.videos.failed > 0}
+    <p class="videos">
+      <strong>Videos:</strong> {status.videos.ready} ready{#if status.videos.processing} · {status.videos.processing} processing{/if}{#if status.videos.failed} · <span class="error">{status.videos.failed} couldn't be processed</span>{/if}{#if status.videos.large} · ⚠ {status.videos.large} over {status.videoWarnMB} MB{/if}
+    </p>
+  {/if}
+
   <h2>Last sync from Immich</h2>
   {#if last}
     <dl>
@@ -74,7 +80,7 @@
 <style>
   section { max-width: 720px; }
   .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
-  .card { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 14px; display: grid; }
+  .card { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; display: grid; }
   .n { font-size: 26px; font-weight: 600; }
   h2 { font-size: 16px; }
   h3 { font-size: 14px; }
@@ -85,6 +91,7 @@
   .errors { color: var(--danger); font-size: 13px; padding-left: 18px; }
   .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .who { margin-top: 32px; font-size: 13px; }
+  .videos { margin: -8px 0 20px; }
   .who a { color: inherit; display: inline-flex; align-items: center; min-height: var(--tap); padding: 0 4px; }
   @media (max-width: 700px) {
     .cards { gap: 8px; }

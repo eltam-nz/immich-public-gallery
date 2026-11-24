@@ -25,6 +25,8 @@ services:
       ADMIN_EMAILS: admin@example.com
       # Test-only: the mock serves Access signing keys and issues tokens.
       CF_ACCESS_JWKS_URL: http://mock-immich:2283/cdn-cgi/access/certs
+      # Low threshold so the 5 MB test video gets the "large video" warning.
+      VIDEO_WARN_MB: "1"
     networks: [edge, backend, egress, immich]
     ports: ["127.0.0.1:8089:3001"]
     depends_on: [mock-immich]

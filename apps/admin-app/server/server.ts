@@ -13,6 +13,7 @@ import type { AdminStatus } from '@showcase/shared';
 import Fastify, { LogController, type FastifyInstance, type FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AuthError, type Verifier } from './auth.js';
+import { sendFile } from '@showcase/shared/node';
 import type { Config } from './config.js';
 import { placeById, searchPlaces } from '@showcase/geo';
 import { assetIds, knownPlace, listCollections, listPhotos, listPlaces, type Sql } from './queries.js';
@@ -53,7 +54,16 @@ const photoPatch = z
 const bulkBody = z
   .object({
     ids: z.array(PUBLIC_ID).min(1).max(5000),
-    set: z.object({ visible: z.boolean(), featured: z.boolean() }).partial().strict().optional(),
+    set: z
+      .object({
+        visible: z.boolean(),
+        featured: z.boolean(),
+        // Copy one caption to a group of photos (null clears it).
+        caption: z.string().max(2000).transform((v) => v.trim() || null).nullable(),
+      })
+      .partial()
+      .strict()
+      .optional(),
     location: locationBody.optional(),
     addTo: PUBLIC_ID.optional(),
     removeFrom: PUBLIC_ID.optional(),
@@ -90,7 +100,7 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 
 const CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; " +
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; media-src 'self'; " +
   "font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 function badRequest(reply: FastifyReply, error: z.ZodError) {
@@ -158,6 +168,16 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
              (SELECT COUNT(*)::int FROM assets a JOIN photos_meta pm USING (immich_asset_id)
                WHERE a.cached_version IS NOT NULL AND NOT pm.visible) AS hidden,
              (SELECT COUNT(*)::int FROM collections) AS collections`;
+    const [videoCounts] = await sql<{ ready: number; processing: number; failed: number; large: number }[]>`
+      -- Same rules as each photo's badge (toAdminPhoto): ready = the published
+      -- version's file exists; failed = the latest version failed.
+      SELECT (COUNT(*) FILTER (WHERE video_version = cached_version))::int AS ready,
+             (COUNT(*) FILTER (WHERE video_version IS DISTINCT FROM cached_version
+                               AND video_error_version IS DISTINCT FROM version))::int AS processing,
+             (COUNT(*) FILTER (WHERE video_version IS DISTINCT FROM cached_version
+                               AND video_error_version = version))::int AS failed,
+             (COUNT(*) FILTER (WHERE source_bytes > ${cfg.VIDEO_WARN_MB * 1e6}))::int AS large
+      FROM assets WHERE media_type = 'video' AND cached_version IS NOT NULL`;
     const s = state?.value as (AdminStatus['lastSync'] & { immichVersion?: string | null }) | undefined;
     return {
       email: (req as unknown as { adminEmail: string }).adminEmail,
@@ -173,6 +193,8 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
           }
         : null,
       counts: counts!,
+      videos: videoCounts!,
+      videoWarnMB: cfg.VIDEO_WARN_MB,
       publicSiteUrl: cfg.PUBLIC_SITE_URL ?? null,
     };
   });
@@ -199,7 +221,7 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
   });
 
   // ---- Photos ----
-  app.get('/api/photos', async () => listPhotos(sql));
+  app.get('/api/photos', async () => listPhotos(sql, undefined, cfg.VIDEO_WARN_MB));
 
   app.patch<{ Params: { id: string } }>('/api/photos/:id', async (req, reply) => {
     const id = PUBLIC_ID.safeParse(req.params.id);
@@ -227,7 +249,7 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
         INSERT INTO photos_meta ${sql({ immich_asset_id: asset.immich_asset_id, ...fields })}
         ON CONFLICT (immich_asset_id) DO UPDATE SET ${sql(fields)}, updated_at = now()`;
     }
-    const [photo] = await listPhotos(sql, id.data);
+    const [photo] = await listPhotos(sql, id.data, cfg.VIDEO_WARN_MB);
     return photo;
   });
 
@@ -384,6 +406,20 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
       .send(createReadStream(path));
   });
 
+  // ---- Videos (any synced video, including hidden ones), with Range support ----
+  app.get<{ Params: { id: string; file: string } }>('/video/:id/:file', async (req, reply) => {
+    const { id, file } = req.params;
+    const version = file.endsWith('.mp4') ? file.slice(0, -4) : '';
+    if (!PUBLIC_ID.safeParse(id).success || !VERSION_RE.test(version)) return reply.code(404).send({ error: 'not_found' });
+    const [row] = await sql`SELECT 1 FROM assets WHERE public_id = ${id} AND media_type = 'video' AND video_version = ${version}`;
+    if (!row) return reply.code(404).send({ error: 'not_found' });
+    return sendFile(reply, join(cfg.CACHE_DIR, id, `${version}-video.mp4`), {
+      type: 'video/mp4',
+      cacheControl: 'private, max-age=31536000, immutable',
+      range: req.headers.range,
+    });
+  });
+
   // ---- Static admin UI ----
   const indexHtml = await readFile(join(webRoot, 'index.html')).catch(() => null);
   app.get('/assets/*', async (req, reply) => {
@@ -399,7 +435,7 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
   });
 
   app.setNotFoundHandler((req, reply) => {
-    if (req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/img/') && indexHtml) {
+    if (req.method === 'GET' && !/^\/(api|img|video)\//.test(req.url) && indexHtml) {
       return reply.type('text/html; charset=utf-8').send(indexHtml);
     }
     return reply.code(404).send({ error: 'not_found' });

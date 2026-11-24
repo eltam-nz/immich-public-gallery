@@ -151,6 +151,12 @@ async function axe(page, label) {
   // ---- Phone workflows (iPhone 13) ----
   const ctx = await b.newContext({ ...devices['iPhone 13'], extraHTTPHeaders: H });
   const page = await ctx.newPage();
+  // A real page load (goto to the same URL with only a hash change keeps the
+  // page's state, e.g. a filter chosen by the previous flow).
+  const fresh = async () => {
+    await page.goto('about:blank');
+    await page.goto(A + '/#photos', { waitUntil: 'networkidle' });
+  };
   const flow = async (name, fn) => {
     try { await fn(); console.log(`ok   flow: ${name}`); } catch (e) { note(`flow ${name}: ${e.message.split('\n')[0]}`); }
   };
@@ -274,6 +280,54 @@ async function axe(page, label) {
     page.once('dialog', (d) => d.accept());
     await page.goBack();
     await page.waitForSelector('aside[aria-label="Edit photo"]', { state: 'detached', timeout: 3000 });
+  });
+
+  await flow('copy caption + place from one photo to selected photos', async () => {
+    const list = await api(ctx, '/api/photos');
+    const [src, a, b2] = [list[6], list[7], list[8]];
+    await fresh();
+    const tiles = page.locator('.grid .thumb');
+    await tiles.nth(6).click();
+    await page.fill('aside textarea', 'Source caption');
+    await page.click('aside footer button:has-text("Save")');
+    await page.waitForSelector('.toast:has-text("Saved.")');
+    await page.click('aside button[aria-label="Close editor"]');
+    await page.click('button:has-text("Select")');
+    await tiles.nth(7).click();
+    await tiles.nth(8).click();
+    await page.click('.selbar button:has-text("Actions")');
+    await page.click('dialog button:has-text("Copy from a photo…")');
+    await page.waitForSelector('.pickbanner');
+    await tiles.nth(6).click();
+    await page.waitForSelector('aside section.copy button:has-text("Copy to 2 photos")');
+    await page.click('aside section.copy button:has-text("Copy to 2 photos")');
+    await page.waitForSelector('.toast:has-text("copied to 2 photos")');
+    const after = await api(ctx, '/api/photos');
+    for (const id of [a.id, b2.id]) {
+      const p = after.find((x) => x.id === id);
+      if (p.caption !== 'Source caption') throw new Error(`caption not copied to ${id}`);
+      if (p.effectivePlace?.id !== src.effectivePlace?.id) throw new Error(`place not copied to ${id}`);
+    }
+    await page.click('aside button[aria-label="Close editor"]');
+    await page.click('.selbar button:has-text("Done")');
+  });
+
+  await flow('bulk Set caption on selected photos', async () => {
+    const list = await api(ctx, '/api/photos');
+    await fresh();
+    await page.click('button:has-text("Select")');
+    const tiles = page.locator('.grid .thumb');
+    await tiles.nth(9).click();
+    await tiles.nth(10).click();
+    await page.click('.selbar button:has-text("Actions")');
+    await page.click('dialog button:has-text("Set caption…")');
+    await page.fill('dialog textarea', 'Group caption');
+    await page.click('dialog button:has-text("Set caption")');
+    await page.waitForSelector('.toast:has-text("Caption set")');
+    const after = await api(ctx, '/api/photos');
+    for (const p of [list[9], list[10]]) {
+      if (after.find((x) => x.id === p.id).caption !== 'Group caption') throw new Error('group caption not set');
+    }
   });
 
   await ctx.close();

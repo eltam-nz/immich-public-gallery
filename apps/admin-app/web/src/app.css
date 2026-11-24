@@ -1,15 +1,20 @@
 :root {
-  --bg: #fafaf9;
-  --fg: #1c1917;
-  --muted: #6b6560;
+  --bg: #f3f4f6;
+  --fg: #111827;
+  --muted: #5b6472;
   --surface: #ffffff;
-  --border: #e2dfdc;
-  --accent: #1c1917;
-  --accent-fg: #fafaf9;
+  --surface-2: #eef0f3;
+  --border: #e2e5ea;
+  --accent: #166534;
+  --accent-fg: #ffffff;
+  --accent-soft: #dcfce7;
+  --accent-strong: #14532d;
   --danger: #b91c1c;
   --ok: #15803d;
   --warn: #b45309;
   --focus: #2563eb;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(17, 24, 39, 0.06), 0 4px 14px rgba(17, 24, 39, 0.06);
   --tabbar: 0px; /* height of the phone bottom tab bar */
   --selbar: 0px; /* height of the phone selection bar, when shown */
   --tap: 32px;
@@ -17,13 +22,17 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0c0a09;
-    --fg: #e7e5e4;
-    --muted: #a8a29e;
-    --surface: #1c1917;
-    --border: #2f2a27;
-    --accent: #e7e5e4;
-    --accent-fg: #0c0a09;
+    --bg: #0f1115;
+    --fg: #f3f4f6;
+    --muted: #a3acb9;
+    --surface: #1a1d23;
+    --surface-2: #23272f;
+    --border: #2d323b;
+    --accent: #86efac;
+    --accent-fg: #052e16;
+    --accent-soft: #14532d;
+    --accent-strong: #bbf7d0;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
     --danger: #f87171;
     --ok: #4ade80;
     --warn: #fbbf24;
@@ -51,8 +60,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 input[type='text'], input[type='number'], input[type='search'], select, textarea {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 10px;
+  border-radius: 10px;
+  padding: 6px 12px;
   width: 100%;
   font-size: 16px;
   min-height: var(--tap);
@@ -65,8 +74,9 @@ textarea { resize: vertical; min-height: 72px; }
   min-width: var(--tap);
   border: 1px solid var(--border);
   background: var(--surface);
-  border-radius: 8px;
-  padding: 4px 12px;
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
   text-decoration: none;
@@ -74,7 +84,9 @@ textarea { resize: vertical; min-height: 72px; }
 }
 .btn.icon { min-width: var(--tap); padding: 4px; font-size: 16px; }
 .btn:disabled { opacity: 0.5; cursor: default; }
+.btn:hover:not(:disabled) { border-color: var(--muted); }
 .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .btn.danger { color: var(--danger); }
 .muted { color: var(--muted); }
 .error { color: var(--danger); }

@@ -25,7 +25,10 @@ let assets = [
   { id: id(1), type: 'IMAGE', checksum: 'c1', localDateTime: '2024-06-01T14:03:22.000Z', exifInfo: exif({ description: 'Westminster at dusk' }), file: 'a.jpg' },
   { id: id(2), type: 'IMAGE', checksum: 'c2', localDateTime: '2024-06-02T09:00:00.000Z', exifInfo: exif({}), file: 'b.jpg' },
   { id: id(3), type: 'IMAGE', checksum: 'c3', localDateTime: '2023-12-24T18:30:00.000Z', exifInfo: exif({ city: 'Bath' }), file: 'c.jpg' },
-  { id: id(4), type: 'VIDEO', checksum: 'c4', localDateTime: '2024-01-01T00:00:00.000Z', exifInfo: null, file: 'a.jpg' },
+  // Videos are dated before the photos so they sort last in lists. id(4) plays;
+  // id(5) can't be decoded (tests failure handling). Both have a poster frame.
+  { id: id(4), type: 'VIDEO', checksum: 'c4', localDateTime: '2023-01-01T00:00:00.000Z', exifInfo: null, file: 'a.jpg', video: 'v.mp4' },
+  { id: id(5), type: 'VIDEO', checksum: 'c5', localDateTime: '2022-01-01T00:00:00.000Z', exifInfo: null, file: 'b.jpg', video: 'bad.mp4' },
 ];
 // Stand-in for Cloudflare Access: signing keys + a test token issuer.
 const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -60,7 +63,9 @@ const json = (res, code, body) => {
   res.writeHead(code, { 'content-type': 'application/json' });
   res.end(JSON.stringify(body));
 };
-const strip = ({ file, ...a }) => a;
+// Current Immich sends video duration in ms; older versions "H:MM:SS.ffffff".
+const strip = ({ file, video, ...a }) =>
+  video ? { ...a, duration: MODE === 'legacy' ? '0:00:03.000000' : 3000 } : a;
 
 createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -115,6 +120,13 @@ createServer(async (req, res) => {
     const a = assets.find((x) => x.id === detail[1]);
     if (!a || a.id === detail404) return json(res, 404, { message: 'Not found' });
     return json(res, 200, { ...strip(a), visibility: 'timeline', isTrashed: false });
+  }
+  const vm = url.pathname.match(/^\/api\/assets\/([0-9a-f-]{36})\/video\/playback$/);
+  const vasset = vm && assets.find((a) => a.id === vm[1] && a.video);
+  if (vasset) {
+    const data = await readFile(join(fixtures, vasset.video));
+    res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': data.length });
+    return res.end(data);
   }
   const m = url.pathname.match(/^\/api\/assets\/([0-9a-f-]{36})\/thumbnail$/);
   const asset = m && assets.find((a) => a.id === m[1]);

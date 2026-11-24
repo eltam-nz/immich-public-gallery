@@ -57,17 +57,19 @@
 {/if}
 
 <style>
-  .where { margin: 0 0 1.5rem; }
+  .where {
+    margin: 0 0 2rem; padding: 0.55rem;
+    background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+  }
   .map {
     height: 14rem;
-    border-radius: var(--radius); overflow: hidden;
-    border: 0.125rem solid var(--border);
-    background: var(--surface);
+    border-radius: var(--radius-sm); overflow: hidden;
+    background: var(--surface-2);
     /* Not interactive: let touches scroll the page instead. */
     touch-action: pan-y;
     cursor: default;
   }
-  figcaption { margin-top: 0.5rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.75rem; }
+  figcaption { margin: 0.4rem 0.4rem 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.75rem; }
   .lead { color: var(--muted); }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0 1.25rem; }
   figcaption a {
