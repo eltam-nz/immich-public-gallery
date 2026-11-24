@@ -99,7 +99,7 @@
       <h2>Public order</h2>
       <p class="muted intro">
         The home page shows collections in this order. {media.phone ? 'Use ↑ ↓ to move one.' : 'Drag ⠿ or use ↑ ↓ to move one.'}
-        <strong>Featured photography</strong> (photos ticked Featured) always appears after them.
+        <strong>Photography</strong> (photos ticked Featured) always appears first, above them.
       </p>
     </div>
     <button class="btn primary" onclick={startCreate}>+ New collection</button>

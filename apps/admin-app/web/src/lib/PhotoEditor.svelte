@@ -224,7 +224,7 @@
       <section>
         <h3>Visibility</h3>
         <label class="check"><input type="checkbox" bind:checked={visible} /> Visible on the public site</label>
-        <label class="check"><input type="checkbox" bind:checked={featured} /> Featured</label>
+        <label class="check"><input type="checkbox" bind:checked={featured} /> Featured <span class="muted small">(shows in Photography on the home page)</span></label>
       </section>
 
       <section>

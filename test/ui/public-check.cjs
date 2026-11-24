@@ -88,6 +88,20 @@ const note = (s) => { problems.push(s); };
   }
   await actx.close();
 
+  // Home page order: title, Photography, Collections, then Browse links; no Featured tile.
+  {
+    const ctx = await b.newContext(devices['iPhone 13']);
+    const p = await ctx.newPage();
+    await p.goto(WEB + '/', { waitUntil: 'networkidle' });
+    const order = await p.evaluate(() => [...document.querySelectorAll('main h1, main h2')].map((h) => h.textContent.trim()));
+    if (JSON.stringify(order) !== JSON.stringify([process.env.SITE_TITLE || order[0], 'Photography', 'Collections', 'Browse'].map(String)))
+      note(`home order: ${JSON.stringify(order)}`);
+    const quick = await p.locator('nav.quick a').allInnerTexts();
+    if (quick.some((t) => /featured/i.test(t)) || !quick.some((t) => /All photos/.test(t))) note(`browse links: ${quick}`);
+    if (/\d{4}/.test(await p.locator('.feature-meta').innerText())) note('Photography subheading still shows a date');
+    await ctx.close();
+  }
+
   // The small collection map must not move when dragged, swiped or scrolled over.
   {
     const ctx = await b.newContext(devices['iPhone 13']);

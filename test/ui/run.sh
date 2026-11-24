@@ -14,7 +14,7 @@ export COMPOSE_PROJECT_NAME=immich-showcase
 export DB_OWNER_PASSWORD=owner-ui-pw PUBLIC_DB_PASSWORD=public-ui-pw ADMIN_DB_PASSWORD=admin-ui-pw
 export PUBLIC_ID_SECRET=ui-secret-ui-secret-ui-secret-ui-secret-1
 export IMMICH_NETWORK=showcase_test_immich SHARED_LINK_KEYS=test-shared-link-key
-export SITE_TITLE="Our Family Photos" PUBLIC_SITE_URL=https://gallery.example.com MOCK_EXTRA_PHOTOS=12
+export SITE_TITLE="Matt's Photo Diary" PUBLIC_SITE_URL=https://gallery.example.com MOCK_EXTRA_PHOTOS=12
 export DATA_DIR=$(mktemp -d "${TMPDIR:-/tmp}/showcase-ui.XXXXXX")
 DC="docker compose -f docker-compose.yml -f docker-compose.test.yml"
 

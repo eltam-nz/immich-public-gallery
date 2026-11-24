@@ -64,7 +64,7 @@
   const heading = $derived(
     route.view === 'all' ? 'All photos'
     : route.view === 'map' ? 'Map'
-    : route.view === 'featured' ? 'Featured photography'
+    : route.view === 'featured' ? 'Photography'
     : route.view === 'collection' ? collection?.title ?? 'Collection'
     : route.view === 'place' ? (place ? `${place.name}, ${place.country}` : 'Place')
     : siteTitle,
@@ -76,11 +76,8 @@
     : route.view === 'featured' ? featured?.covers[0]
     : undefined,
   );
-  const range = $derived(
-    route.view === 'collection' ? formatRange(collection?.dateRange ?? null)
-    : route.view === 'featured' ? formatRange(featured?.dateRange ?? null)
-    : null,
-  );
+  // Dates are shown for collections (the Photography page shows just a count).
+  const range = $derived(route.view === 'collection' ? formatRange(collection?.dateRange ?? null) : null);
   const placeSummary = $derived(
     collectionPlaces.length
       ? collectionPlaces.slice(0, 2).map((p) => p.name).join(', ') + (collectionPlaces.length > 2 ? ` +${collectionPlaces.length - 2} more` : '')

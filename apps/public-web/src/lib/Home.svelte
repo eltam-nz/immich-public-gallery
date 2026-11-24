@@ -28,16 +28,22 @@
   </p>
 </header>
 
-<!-- Quick ways in: big labelled tiles -->
-<nav class="quick" aria-label="Ways to browse">
-  <a href={href({ view: 'all' })} use:link><span class="ico"><Icon name="grid" size="1.6rem" /></span><span>All photos</span></a>
-  {#if places.length}
-    <a href={href({ view: 'map' })} use:link><span class="ico"><Icon name="map" size="1.6rem" /></span><span>Map</span></a>
-  {/if}
-  {#if hasFeatured}
-    <a href={href({ view: 'featured' })} use:link><span class="ico"><Icon name="star" size="1.6rem" /></span><span>Featured</span></a>
-  {/if}
-</nav>
+<!-- Photography (photos ticked Featured) comes first, as a distinct dark panel. -->
+{#if hasFeatured && featured}
+  <section class="featured" aria-labelledby="photography">
+    <a class="feature-card" href={href({ view: 'featured' })} use:link>
+      <span class="mosaic tiles-{tiles(featured.covers).length}">
+        {#each tiles(featured.covers) as src (src)}<img {src} alt="" loading="lazy" decoding="async" />{/each}
+      </span>
+      <span class="feature-text">
+        <span class="kicker"><Icon name="star" />Selected favourites</span>
+        <h2 id="photography">Photography</h2>
+        <span class="feature-meta">{plural(featured.count, 'photo')}</span>
+        <span class="btn primary go">View photography <Icon name="chevron" /></span>
+      </span>
+    </a>
+  </section>
+{/if}
 
 {#if collections.length}
   <section aria-labelledby="collections">
@@ -65,22 +71,16 @@
   </section>
 {/if}
 
-{#if hasFeatured && featured}
-  {@const range = formatRange(featured.dateRange)}
-  <section class="featured" aria-labelledby="featured">
-    <a class="feature-card" href={href({ view: 'featured' })} use:link>
-      <span class="mosaic tiles-{tiles(featured.covers).length}">
-        {#each tiles(featured.covers) as src (src)}<img {src} alt="" loading="lazy" decoding="async" />{/each}
-      </span>
-      <span class="feature-text">
-        <span class="kicker"><Icon name="star" />Selected favourites</span>
-        <h2 id="featured">Featured photography</h2>
-        <span class="feature-meta">{[plural(featured.count, 'photo'), range].filter(Boolean).join(' · ')}</span>
-        <span class="btn primary go">View featured photos <Icon name="chevron" /></span>
-      </span>
-    </a>
-  </section>
-{/if}
+<!-- Other ways in, at the bottom: big labelled tiles -->
+<section aria-labelledby="browse">
+  <div class="section-head"><h2 id="browse">Browse</h2></div>
+  <nav class="quick" aria-label="Ways to browse">
+    <a href={href({ view: 'all' })} use:link><span class="ico"><Icon name="grid" size="1.6rem" /></span><span>All photos</span></a>
+    {#if places.length}
+      <a href={href({ view: 'map' })} use:link><span class="ico"><Icon name="map" size="1.6rem" /></span><span>Map</span></a>
+    {/if}
+  </nav>
+</section>
 
 <style>
   .intro { margin: 0.25rem 0 1.25rem; }
@@ -91,7 +91,7 @@
   /* Quick actions: icon in a soft circle, label underneath */
   .quick {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(5.75rem, 1fr)); gap: 0.6rem;
-    margin-bottom: 2rem; max-width: 36rem;
+    max-width: 26rem;
   }
   .quick a {
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.4rem;
