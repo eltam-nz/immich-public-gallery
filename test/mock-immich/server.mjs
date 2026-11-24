@@ -4,6 +4,7 @@
 // MOCK_IMMICH_MODE=current (default): like current Immich, the album response has
 //   assetCount but no assets; assets are listed via /timeline/* and /assets/:id.
 // MOCK_IMMICH_MODE=legacy: like older Immich, the album response includes assets.
+import { createSign, generateKeyPairSync } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
@@ -12,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const KEY = 'test-shared-link-key';
 const ALBUM = '11111111-1111-4111-8111-111111111111';
-const id = (n) => `aaaaaaaa-aaaa-4aaa-8aaa-00000000000${n}`;
+const id = (n) => `aaaaaaaa-aaaa-4aaa-8aaa-${String(n).padStart(12, '0')}`;
 
 const exif = (extra) => ({
   make: 'Canon', model: 'Canon EOS R5', lensModel: 'RF24-70mm F2.8 L IS USM',
@@ -26,6 +27,28 @@ let assets = [
   { id: id(3), type: 'IMAGE', checksum: 'c3', localDateTime: '2023-12-24T18:30:00.000Z', exifInfo: exif({ city: 'Bath' }), file: 'c.jpg' },
   { id: id(4), type: 'VIDEO', checksum: 'c4', localDateTime: '2024-01-01T00:00:00.000Z', exifInfo: null, file: 'a.jpg' },
 ];
+// Stand-in for Cloudflare Access: signing keys + a test token issuer.
+const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const accessJwk = { ...publicKey.export({ format: 'jwk' }), kid: 'test-key', alg: 'RS256', use: 'sig' };
+const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+function signAccessToken({ email, aud = 'test-aud', iss = 'https://test.cloudflareaccess.com', expSeconds = 300 }) {
+  const now = Math.floor(Date.now() / 1000);
+  const body = `${b64({ alg: 'RS256', kid: 'test-key', typ: 'JWT' })}.${b64({ email, aud: [aud], iss, iat: now, exp: now + expSeconds, type: 'app' })}`;
+  return `${body}.${createSign('RSA-SHA256').update(body).sign(privateKey).toString('base64url')}`;
+}
+
+// Optional extra photos for UI demos (not used by e2e): MOCK_EXTRA_PHOTOS=N
+// spreads N more images over a year and a few New Zealand cities.
+const EXTRA_PLACES = [[-36.8485, 174.7633], [-43.5321, 172.6362], [-41.2866, 174.7756], [-45.0312, 168.6626]];
+for (let i = 0; i < Number(process.env.MOCK_EXTRA_PHOTOS ?? 0); i++) {
+  const [lat, lon] = EXTRA_PLACES[i % EXTRA_PLACES.length];
+  const month = String((i % 12) + 1).padStart(2, '0');
+  assets.push({
+    id: id(100 + i), type: 'IMAGE', checksum: `x${i}`, localDateTime: `2025-${month}-1${i % 9}T10:00:00.000Z`,
+    exifInfo: exif({ latitude: lat, longitude: lon, city: null, description: null }), file: ['a.jpg', 'b.jpg', 'c.jpg'][i % 3],
+  });
+}
+
 let revoked = false;
 let brokenTimeline = false; // simulate an API change: timeline lists nothing
 let detail404 = null; // asset id whose /assets/:id returns 404
@@ -47,8 +70,17 @@ createServer(async (req, res) => {
     if (url.pathname === '/__control/remove-one') { assets = assets.filter((a) => a.id !== id(3)); return json(res, 200, { ok: true }); }
     if (url.pathname === '/__control/detail-404') { detail404 = id(2); return json(res, 200, { ok: true }); }
     if (url.pathname === '/__control/mode') return json(res, 200, { mode: MODE });
+    if (url.pathname === '/__control/sign') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      return res.end(signAccessToken({
+        email: url.searchParams.get('email') ?? 'admin@example.com',
+        aud: url.searchParams.get('aud') ?? undefined,
+        expSeconds: Number(url.searchParams.get('exp') ?? 300),
+      }));
+    }
     if (url.pathname === '/__control/break-timeline') { brokenTimeline = true; return json(res, 200, { ok: true }); }
   }
+  if (url.pathname === '/cdn-cgi/access/certs') return json(res, 200, { keys: [accessJwk] });
   requests.push(`${req.method} ${url.pathname}${url.searchParams.has('size') ? `?size=${url.searchParams.get('size')}` : ''}`);
   if (url.pathname === '/api/server/version') return json(res, 200, { major: MODE === 'legacy' ? 1 : 2, minor: 0, patch: 0 });
   if (url.searchParams.get('key') !== KEY || revoked) return json(res, 401, { message: 'Invalid share key' });

@@ -3,3 +3,6 @@ dist/
 .env
 *.log
 test/mock-immich/fixtures/
+test/ui/node_modules/
+test/ui/shots/
+test/ui/admin-shots/

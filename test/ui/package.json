@@ -1,0 +1,8 @@
+{
+  "name": "showcase-ui-checks",
+  "private": true,
+  "description": "Optional browser checks (see run.sh). Playwright with Chromium must be installed separately.",
+  "devDependencies": {
+    "axe-core": "4.10.3"
+  }
+}

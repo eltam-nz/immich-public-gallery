@@ -1,16 +1,19 @@
 <script lang="ts">
   import type { PublicPhoto } from '@showcase/shared';
+  import { formatDate } from './format';
 
   let { photos, onopen }: { photos: PublicPhoto[]; onopen: (id: string) => void } = $props();
 
   const ratio = (p: PublicPhoto) => (p.width && p.height ? p.width / p.height : 1.5);
+  const label = (p: PublicPhoto, i: number) =>
+    [`Photo ${i + 1} of ${photos.length}`, p.caption, formatDate(p.takenAt)].filter(Boolean).join(', ');
 </script>
 
 <!-- Justified rows: each tile grows in proportion to its aspect ratio. -->
 <ul class="grid">
-  {#each photos as p (p.id)}
+  {#each photos as p, i (p.id)}
     <li style:--r={ratio(p)}>
-      <button onclick={() => onopen(p.id)} aria-label={p.caption ?? p.description ?? 'Open photo'}>
+      <button onclick={() => onopen(p.id)} aria-label={label(p, i)}>
         <img
           src={p.src.thumb}
           alt={p.caption ?? p.description ?? ''}
@@ -32,13 +35,14 @@
     padding: 0;
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 0.5rem;
   }
   li {
     flex-grow: calc(var(--r) * 100);
     flex-basis: calc(var(--r) * var(--row-height));
     aspect-ratio: var(--r);
-    max-height: calc(var(--row-height) * 1.6);
+    max-height: calc(var(--row-height) * 1.8);
+    min-width: 0;
   }
   li.filler {
     flex-grow: 10000;
@@ -51,23 +55,15 @@
     height: 100%;
     padding: 0;
     border: 0;
-    background: var(--border);
+    background: var(--surface);
     cursor: zoom-in;
     overflow: hidden;
-    border-radius: 3px;
+    border-radius: 0.4rem;
   }
   img {
     display: block;
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transition: transform 0.3s ease;
-  }
-  button:hover img,
-  button:focus-visible img {
-    transform: scale(1.03);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    img { transition: none; }
   }
 </style>

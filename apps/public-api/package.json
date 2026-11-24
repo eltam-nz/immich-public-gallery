@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@fastify/rate-limit": "^10.3.0",
+    "@showcase/geo": "workspace:*",
     "@showcase/shared": "workspace:*",
     "fastify": "^5.12.0",
     "postgres": "^3.4.7",

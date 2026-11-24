@@ -5,6 +5,7 @@ services:
     command: node /mock/server.mjs
     environment:
       MOCK_IMMICH_MODE: ${MOCK_IMMICH_MODE:-current}
+      MOCK_EXTRA_PHOTOS: ${MOCK_EXTRA_PHOTOS:-0}
     volumes: ["./test/mock-immich:/mock:ro"]
     networks: [immich]
     ports: ["127.0.0.1:2283:2283"]
@@ -16,6 +17,17 @@ services:
     # edge and backend are internal, so published ports need a non-internal network.
     networks: [edge, backend, hostaccess]
     ports: ["127.0.0.1:8088:8080"]
+
+  admin-app:
+    environment:
+      CF_ACCESS_TEAM_DOMAIN: test.cloudflareaccess.com
+      CF_ACCESS_AUD: test-aud
+      ADMIN_EMAILS: admin@example.com
+      # Test-only: the mock serves Access signing keys and issues tokens.
+      CF_ACCESS_JWKS_URL: http://mock-immich:2283/cdn-cgi/access/certs
+    networks: [edge, backend, egress, immich]
+    ports: ["127.0.0.1:8089:3001"]
+    depends_on: [mock-immich]
 
 networks:
   hostaccess: {}

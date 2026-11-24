@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cameraLabel, roundCoord, sanitizeExif, toPublicPhoto, type PhotoRow } from './index.js';
+import { cameraLabel, sanitizeExif, toPublicPhoto, type PhotoRow } from './index.js';
 
 describe('sanitizeExif', () => {
   it('keeps only allowlisted fields', () => {
@@ -25,12 +25,6 @@ describe('sanitizeExif', () => {
   });
 });
 
-describe('roundCoord', () => {
-  it('hides when precision < 0', () => expect(roundCoord(51.5, -1)).toBeUndefined());
-  it('rounds', () => expect(roundCoord(51.123456, 1)).toBe(51.1));
-  it('caps precision at 4', () => expect(roundCoord(51.123456, 9)).toBe(51.1235));
-});
-
 describe('cameraLabel', () => {
   it('dedupes brand', () => expect(cameraLabel('Canon', 'Canon EOS R5')).toBe('Canon EOS R5'));
   it('joins', () => expect(cameraLabel('FUJIFILM', 'X-T4')).toBe('FUJIFILM X-T4'));
@@ -38,32 +32,37 @@ describe('cameraLabel', () => {
 });
 
 describe('toPublicPhoto', () => {
+  const london = { id: 'g2643743', name: 'London', country: 'United Kingdom', countryCode: 'GB', lat: 51.50853, lon: -0.12574 };
   const row: PhotoRow = {
     public_id: 'abcdefghijklmnop',
     version: 'v1',
     width: 100,
     height: 50,
     taken_at: '2024-01-01T10:00:00',
-    meta: { latitude: 51.123456, longitude: -0.98765, city: 'London' },
-    collection_id: null,
-    collection_slug: null,
-    collection_title: null,
+    meta: { latitude: 51.123456, longitude: -0.98765, city: 'Westminster', state: 'England' },
+    collections: null,
     caption: null,
     tags: null,
     featured: null,
-    gps_precision: null,
+    place: london,
     custom: null,
   };
 
-  it('hides GPS by default', () => {
-    expect(toPublicPhoto(row, -1).location).toEqual({ city: 'London' });
+  it('publishes only the city-level place', () => {
+    expect(toPublicPhoto(row).location).toEqual({ placeId: 'g2643743', name: 'London', country: 'United Kingdom' });
   });
 
-  it('applies per-photo precision override', () => {
-    expect(toPublicPhoto({ ...row, gps_precision: 2 }, -1).location).toEqual({ city: 'London', lat: 51.12, lon: -0.99 });
+  it('never publishes coordinates, photo or city', () => {
+    const json = JSON.stringify(toPublicPhoto(row));
+    expect(json).not.toMatch(/51\.12|0\.987|51\.508|lat|lon/);
+    expect(json).not.toMatch(/Westminster|England/); // Immich's own place text is not published
+  });
+
+  it('no place -> no location', () => {
+    expect(toPublicPhoto({ ...row, place: null }).location).toBeNull();
   });
 
   it('never exposes internal ids', () => {
-    expect(JSON.stringify(toPublicPhoto(row, 4))).not.toMatch(/immich/i);
+    expect(JSON.stringify(toPublicPhoto(row))).not.toMatch(/immich/i);
   });
 });
