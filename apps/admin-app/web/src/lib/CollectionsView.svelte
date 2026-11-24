@@ -69,17 +69,14 @@
     return run(() => api.updateCollection(c.id, { visible: !c.visible }), c.visible ? `“${c.title}” hidden.` : `“${c.title}” shown.`);
   };
 
-  // Reorder with ↑/↓: swap with the neighbour, then renumber in steps of 10
-  // (only collections whose number changes are updated).
+  // Reorder with ↑/↓: swap with the neighbour and save the whole order in one
+  // request (the server renumbers in steps of 10 inside a transaction).
   async function move(i: number, delta: number) {
-    const order = [...collections];
+    const order = collections.map((c) => c.id);
     const j = i + delta;
     if (j < 0 || j >= order.length) return;
     [order[i], order[j]] = [order[j]!, order[i]!];
-    const changes = order.map((c, k) => ({ c, sort: (k + 1) * 10 })).filter(({ c, sort }) => c.sort !== sort);
-    await run(async () => {
-      for (const { c, sort } of changes) await api.updateCollection(c.id, { sort });
-    }, 'Order updated.');
+    await run(() => api.orderCollections(order), 'Order updated.');
   }
 </script>
 

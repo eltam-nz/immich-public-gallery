@@ -58,6 +58,7 @@ export const api = {
   updateCollection: (id: string, patch: CollectionPatch) =>
     call<AdminCollection>('PATCH', `/api/collections/${id}`, patch),
   deleteCollection: (id: string) => call<void>('DELETE', `/api/collections/${id}`),
+  orderCollections: (ids: string[]) => call<AdminCollection[]>('PUT', '/api/collections/order', { ids }),
 };
 
 export const placeLabel = (p: PlaceRef | null) => (p ? `${p.name}, ${p.country}` : 'No location');

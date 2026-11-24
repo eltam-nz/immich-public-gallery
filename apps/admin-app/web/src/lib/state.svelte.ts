@@ -16,12 +16,31 @@ function parseHash(): { tab: Tab; photo: string | null } {
 }
 
 export const route = $state(parseHash());
-addEventListener('popstate', () => Object.assign(route, parseHash()));
-addEventListener('hashchange', () => Object.assign(route, parseHash()));
+
+/** Set by the photo editor so Back can't silently discard unsaved edits. */
+export const editorGuard = $state({ dirty: false, leaving: false });
+
+// popstate also fires for hash changes (Back/Forward and typed hashes).
+addEventListener('popstate', () => {
+  const next = parseHash();
+  if (route.photo && next.photo !== route.photo && editorGuard.dirty && !editorGuard.leaving) {
+    if (!confirm('Discard unsaved changes to this photo?')) {
+      // Stay on the photo: put its entry back.
+      history.pushState(null, '', `#${route.tab}/${route.photo}`);
+      return;
+    }
+  }
+  editorGuard.leaving = false;
+  Object.assign(route, next);
+});
 
 let pushedEditor = false;
 
 export function go(tab: Tab, photo: string | null = null, opts: { replace?: boolean } = {}) {
+  // Leaving a photo with unsaved edits by another route (e.g. a tab) asks first too.
+  if (route.photo && photo !== route.photo && editorGuard.dirty && !editorGuard.leaving) {
+    if (!confirm('Discard unsaved changes to this photo?')) return;
+  }
   const hash = `#${tab}${photo ? `/${photo}` : ''}`;
   if (opts.replace) history.replaceState(null, '', hash);
   else history.pushState(null, '', hash);

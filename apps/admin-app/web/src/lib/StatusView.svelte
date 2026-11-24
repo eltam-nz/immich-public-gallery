@@ -85,7 +85,7 @@
   .errors { color: var(--danger); font-size: 13px; padding-left: 18px; }
   .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .who { margin-top: 32px; font-size: 13px; }
-  .who a { color: inherit; }
+  .who a { color: inherit; display: inline-flex; align-items: center; min-height: var(--tap); padding: 0 4px; }
   @media (max-width: 700px) {
     .cards { gap: 8px; }
     .card { padding: 10px; }

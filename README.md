@@ -1,6 +1,6 @@
 # Immich Showcase
 
-A self-hosted public photo site built from selected Immich albums. It runs as a Portainer stack and is published through a Cloudflare Tunnel. Immich itself is never exposed.
+A self-hosted public photo site built from one shared Immich album. It runs as a Portainer stack and is published through a Cloudflare Tunnel. Immich itself is never exposed.
 
 **Status:** foundation, admin app, backups and the visitor-facing site are done. One Immich album is shared through a link key. Everything else is managed inside the gallery, from a private admin app: collections (sub-albums), captions, tags, visibility and each photo's place.
 
@@ -31,17 +31,24 @@ Other guarantees:
 - **Least-privilege database.** The public role can read the admin tables but not write them. The admin role can edit the admin tables (photo overrides, collections) but can only read synced data.
 - **Admin app behind two locks.** Cloudflare Access must let you in, and the app then verifies Access's signed token itself (issuer, audience, expiry, signature) and checks your email against `ADMIN_EMAILS`. A request that reaches the container any other way is rejected. Without these settings the app refuses to start. Changes also need a custom request header and a same-origin request, which blocks cross-site request forgery.
 - **The admin app never talks to Immich.** It has no Immich key and no route to Immich. "Sync now" is a database notification that the public API acts on.
-- **Isolated networks (bundled-tunnel mode).** cloudflared can only reach `public-web`, and only cloudflared has outbound internet (its own `egress` network). `public-web`, `public-api` and the database sit on `internal` networks with no internet access through this stack; `public-api` also joins your Immich network to reach Immich. No host ports are published.
-- **Shared-tunnel mode weakens isolation.** With `docker-compose.shared-tunnel.yml`, `public-web` joins your existing tunnel network. It can reach, and be reached by, every other container on that network, and it gains outbound internet access through it. Use bundled-tunnel mode if you want strict isolation.
+- **Isolated networks (bundled-tunnel mode).**
+  - cloudflared can only reach `public-web` and `admin-app`.
+  - Only cloudflared and `admin-app` have outbound internet, through the `egress` network. The admin app needs it only to fetch Cloudflare Access's signing keys.
+  - `public-web`, `public-api`, the backup service and the database sit on `internal` networks with no internet access through this stack.
+  - `public-api` also joins your Immich network to reach Immich.
+  - No host ports are published.
+- **Shared-tunnel mode weakens isolation.** With `docker-compose.shared-tunnel.yml`, `public-web` and `admin-app` join your existing tunnel network. It can reach, and be reached by, every other container on that network, and it gains outbound internet access through it. Use bundled-tunnel mode if you want strict isolation.
 - **Read-only web container.** nginx rejects anything except GET/HEAD and sets a strict CSP (no inline scripts or styles). Containers run read-only, non-root, with all capabilities dropped.
 - **Outage-safe.** If Immich is unreachable during a sync, nothing is deleted. Photos are only removed when Immich says they're gone or the link has been revoked.
 
 ```
 Bundled tunnel:
-Internet → Cloudflare → cloudflared ─(edge, internal)→ public-web (nginx) ─(backend)→ public-api ─(immich net)→ Immich
-                          └─(egress)→ internet                                          └─(backend)→ Postgres
+Internet → Cloudflare → cloudflared ─(edge)→ public-web (nginx) ─(backend)→ public-api ─(immich net)→ Immich
+                │                  └─(edge)→ admin-app ─(backend)→ Postgres ←─ public-api, backup
+                └─ Cloudflare Access in front of the admin hostname
 
-Shared tunnel: your existing cloudflared ─(TUNNEL_NETWORK)→ public-web (alias immich-showcase-web); the rest is unchanged.
+Shared tunnel: your existing cloudflared ─(TUNNEL_NETWORK)→ public-web (alias immich-showcase-web)
+                                                          → admin-app  (alias immich-showcase-admin)
 ```
 
 ## Setup
@@ -55,39 +62,40 @@ Shared tunnel: your existing cloudflared ─(TUNNEL_NETWORK)→ public-web (alia
 
 **Bundled tunnel (default, strictest isolation).** The stack runs its own cloudflared.
 1. In Cloudflare Zero Trust, go to **Networks → Tunnels → Create tunnel** (cloudflared) and copy the token.
-2. Add the public hostname `photos.example.com` → service `http://public-web:8080`.
-3. In the stack's variables, set `COMPOSE_PROFILES=bundled-tunnel` and `TUNNEL_TOKEN`.
+2. In the stack's variables (step 4), set `COMPOSE_PROFILES=bundled-tunnel` and `TUNNEL_TOKEN`.
 
 **Shared tunnel.** Use a cloudflared container you already run.
 1. Note the Docker network that cloudflared container is on (`docker network ls`), e.g. `proxy`.
-2. In Portainer, add `docker-compose.shared-tunnel.yml` under **Additional paths** when creating the stack.
-3. Set `TUNNEL_NETWORK` to that network. Do **not** set `COMPOSE_PROFILES` or `TUNNEL_TOKEN`.
-4. In that tunnel's configuration, add the public hostname `photos.example.com` → service `http://immich-showcase-web:8080`.
-5. Read the shared-tunnel caveat under "How it stays secure".
+2. In Portainer (step 4), add `docker-compose.shared-tunnel.yml` under **Additional paths** and set `TUNNEL_NETWORK` to that network. Do **not** set `COMPOSE_PROFILES` or `TUNNEL_TOKEN`.
+3. Read the shared-tunnel caveat under "How it stays secure".
 
 **In either mode, recommended Cloudflare settings:**
-- A cache rule for `photos.example.com/img/*` (eligible for cache, long edge TTL).
 - A rate-limiting rule on `/api/*`.
 - Bot Fight Mode on.
+- No cache rule is needed for images. They're `.webp` files sent with a one-year immutable cache header, so Cloudflare caches them by default (check with `curl -sI … | grep cf-cache-status`, which should show `HIT`).
 
-### 3. In Portainer
-1. **Stacks → Add stack → Repository.** Point it at this repo, with compose path `docker-compose.yml`.
-2. Add the variables from `.env.example` for your tunnel mode. Generate secrets with `openssl rand -hex 32` (hex, because `PUBLIC_DB_PASSWORD` goes into a connection URL where base64's `/` and `+` break it).
+### 3. Cloudflare Access for the admin app (`gallery-admin` hostname)
+1. In Cloudflare Zero Trust, go to **Access → Applications → Add an application → Self-hosted**.
+   - Set the domain to your admin hostname (e.g. `gallery-admin.example.com`).
+   - Add an **Allow** policy with **Emails** set to your address.
+   - Use one-time PIN as the only login method, with **Instant Auth** on.
+2. On that application's **Overview**, copy the **Application Audience (AUD) Tag**. Your team domain (`<team>.cloudflareaccess.com`) is under **Settings → Custom Pages**.
+
+### 4. In Portainer
+1. **Stacks → Add stack → Repository.** Point it at this repo, with compose path `docker-compose.yml`. For a shared tunnel, also add `docker-compose.shared-tunnel.yml` under **Additional paths**.
+2. Add the variables from `.env.example` for your tunnel mode, including `ADMIN_DB_PASSWORD`, `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `ADMIN_EMAILS` (your email) and, optionally, `PUBLIC_SITE_URL`.
+   - Generate secrets with `openssl rand -hex 32`. Use hex because the passwords go into connection URLs, where base64's `/` and `+` break them.
+   - Without the admin settings, the admin container refuses to start, and the rest of the stack still runs.
 3. Set `IMMICH_NETWORK` to your Immich stack's network (run `docker network ls`; it's usually `immich_default`). Set `IMMICH_URL` to `http://immich_server:2283`.
 4. Deploy. Portainer builds the images on the server. The first sync runs at startup and then every `SYNC_INTERVAL_MINUTES`.
 
-### 4. Admin app (`gallery-admin` hostname)
-1. In Cloudflare Zero Trust, go to **Access → Applications → Add an application → Self-hosted**. Set the domain to your admin hostname (e.g. `gallery-admin.example.com`). Add an **Allow** policy with **Emails** set to your address, and use one-time PIN login.
-2. On that application's **Overview**, copy the **Application Audience (AUD) Tag**. Your team domain (`<team>.cloudflareaccess.com`) is under **Settings → Custom Pages**.
-3. Set the stack variables `ADMIN_DB_PASSWORD`, `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `ADMIN_EMAILS` (your email) and, optionally, `PUBLIC_SITE_URL`. Then redeploy.
-4. Add the tunnel's public hostname:
-   - Shared tunnel: `gallery-admin.example.com` → `http://immich-showcase-admin:3001`.
-   - Bundled tunnel: `gallery-admin.example.com` → `http://admin-app:3001`.
-
-   Create the Access application **before** the route. If the route goes live first, the app still rejects everyone, because no valid Access token exists yet.
+### 5. Tunnel routes
+- **Public site:** `photos.example.com` → `http://immich-showcase-web:8080` (shared tunnel) or `http://public-web:8080` (bundled).
+- **Admin:** `gallery-admin.example.com` → `http://immich-showcase-admin:3001` (shared) or `http://admin-app:3001` (bundled).
+- Create the Access application (step 3) **before** the admin route. Even if the route goes live first, the app rejects everyone, because no valid Access token exists yet.
 
 In the admin app:
-- **Photos:** show or hide photos, and edit captions, tags and sort order. The "Featured" flag is kept but currently isn't shown on the public site. Bulk-select to hide, show or feature photos, or add them to (or remove them from) a collection.
+- **Photos:** show or hide photos, and edit captions, tags and sort order. The "Featured" flag is kept but currently isn't used by the public site. Bulk-select to hide, show or feature photos, or add them to (or remove them from) a collection.
 - **Location:** each photo shows its town or city, worked out from its GPS. You can choose another place (search any town or city, or pick one already in the gallery), switch back to GPS, or hide the location.
   - **Copy a place to other photos:** tick the photos that need it, open a photo that already has the right place, and click **Apply \<place\> to N selected photos**.
   - **Find photos without a place:** use the **No location** filter.
@@ -123,13 +131,13 @@ The `backup` service writes a verified `pg_dump` of the database every `BACKUP_I
   ```
 - **Restore** (replaces the current gallery database with the dump):
   ```bash
-  docker stop immich-showcase-admin-app-1 immich-showcase-public-api-1
+  docker stop immich-showcase-admin-app-1 immich-showcase-public-api-1 immich-showcase-backup-1
   ```
   ```bash
   docker exec -i immich-showcase-db-1 pg_restore -U showcase_owner -d showcase --clean --if-exists < /path/to/showcase-YYYYMMDD-HHMMSS.dump
   ```
   ```bash
-  docker start immich-showcase-public-api-1 immich-showcase-admin-app-1
+  docker start immich-showcase-public-api-1 immich-showcase-admin-app-1 immich-showcase-backup-1
   ```
   The next sync brings photos up to date with Immich. Your collections, captions and settings come from the dump.
 
@@ -159,8 +167,14 @@ pnpm build && pnpm test
 
 The last command runs an end-to-end test of the full stack against a mock Immich. It needs Docker.
 
+Optional browser checks run against a seeded test stack. They take screenshots at phone and desktop sizes, run an accessibility scan, check tap-target and text sizes, and walk through the main admin phone workflows. They need Playwright with Chromium installed and `npm install --prefix test/ui`:
+
+```bash
+./test/ui/run.sh
+```
+
 Admin-managed data:
-- `photos_meta`: visibility, caption, tags, featured, sort, GPS precision, and `custom` jsonb for future inputs.
+- `photos_meta`: visibility, caption, tags, featured, sort, location choice (`location_mode`, `location_place`), and `custom` jsonb for future inputs.
 - `collections` and `collection_photos`: gallery sub-albums and their photos.
 
 To run the admin UI locally against the test stack, use `KEEP=1 ./test/e2e.sh`. The admin app is then on `127.0.0.1:8089` and needs a `Cf-Access-Jwt-Assertion` header. The mock issues test tokens at `http://127.0.0.1:2283/__control/sign`.
@@ -175,7 +189,7 @@ packages/shared    Public types + metadata allowlist (shared by API and web)
 packages/geo       Offline gazetteer: nearest city + place search (GeoNames data)
 db/                Migrations + one-shot migrator image
 deploy/nginx       nginx config (CSP, headers, proxy to API)
-test/              Mock Immich + end-to-end test
+test/              Mock Immich, end-to-end test, optional browser checks (test/ui)
 ```
 
 ## Roadmap

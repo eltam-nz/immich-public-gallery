@@ -322,6 +322,19 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
     return writeCollection(reply, body.data, id.data);
   });
 
+  // Set the order of all collections at once (ids first to last), in one
+  // transaction, so a failure can't leave the order half-changed.
+  app.put('/api/collections/order', async (req, reply) => {
+    const body = idsBody.safeParse(req.body);
+    if (!body.success) return badRequest(reply, body.error);
+    await sql.begin(async (tx) => {
+      for (const [i, id] of body.data.ids.entries()) {
+        await tx`UPDATE collections SET sort = ${(i + 1) * 10}, updated_at = now() WHERE public_id = ${id}`;
+      }
+    });
+    return listCollections(sql);
+  });
+
   app.delete<{ Params: { id: string } }>('/api/collections/:id', async (req, reply) => {
     const id = PUBLIC_ID.safeParse(req.params.id);
     if (!id.success) return reply.code(404).send({ error: 'not_found' });

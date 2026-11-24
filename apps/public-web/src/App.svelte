@@ -29,10 +29,14 @@
   const isHomeGrid = $derived(route.view === 'home' && collections !== null && collections.length === 0);
 
   // Load the photos for the current page (not when only the open photo changes).
+  // Each load gets a number; a slower response from an earlier page is ignored.
+  let loadSeq = 0;
   $effect(() => {
     const r = route;
     const homeGrid = isHomeGrid;
+    const seq = ++loadSeq; // also invalidates earlier loads when this page loads nothing
     if (r.view === 'map' || (r.view === 'home' && collections === null)) return;
+    const current = () => seq === loadSeq;
     loading = true;
     error = null;
     const wanted =
@@ -41,11 +45,11 @@
       : r.view === 'all' || homeGrid ? api.photos()
       : Promise.resolve([] as PublicPhoto[]);
     collectionPlaces = [];
-    if (r.view === 'collection') api.places(r.id).then((p) => (collectionPlaces = p)).catch(() => {});
+    if (r.view === 'collection') api.places(r.id).then((p) => current() && (collectionPlaces = p)).catch(() => {});
     wanted
-      .then((p) => (photos = p))
-      .catch((e: Error) => (error = e.message))
-      .finally(() => (loading = false));
+      .then((p) => current() && (photos = p))
+      .catch((e: Error) => current() && (error = e.message))
+      .finally(() => current() && (loading = false));
   });
 
   const collection = $derived(

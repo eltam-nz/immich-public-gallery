@@ -4,7 +4,7 @@
   import { api, formatDate, placeLabel, type LocationChoice } from './api';
   import PlacePicker from './PlacePicker.svelte';
   import Sheet from './Sheet.svelte';
-  import { media, notify } from './state.svelte';
+  import { editorGuard, media, notify } from './state.svelte';
 
   let {
     photo,
@@ -43,13 +43,19 @@
   let featured = $state(initial.featured);
   let caption = $state(initial.caption ?? '');
   let tags = $state(tagText(initial.tags));
-  let sort = $state(initial.sort === null ? '' : String(initial.sort));
+  // bind:value on a number input gives a number, or null/undefined when empty.
+  let sort = $state<number | null | undefined>(initial.sort);
   let member = $state<Set<string>>(new Set(initial.collections));
   let busy = $state(false);
   let picking = $state(false);
 
   const others = $derived(selectedIds.filter((id) => id !== photo.id));
-  const parseTags = (s: string) => s.split(',').map((t) => t.trim()).filter(Boolean);
+  // Same normalisation as the server (trim, collapse spaces, no duplicates), so a
+  // saved form never looks "unsaved".
+  const parseTags = (s: string) => [
+    ...new Set(s.split(',').map((t) => t.trim().replace(/\s+/g, ' ')).filter(Boolean)),
+  ];
+  const sortValue = $derived(typeof sort === 'number' && Number.isFinite(sort) ? Math.trunc(sort) : null);
 
   // Unsaved changes in the form (location changes save immediately).
   const dirty = $derived(
@@ -57,15 +63,22 @@
       featured !== photo.featured ||
       (caption.trim() || null) !== (photo.caption ?? null) ||
       tagText(parseTags(tags)) !== tagText(photo.tags) ||
-      (sort.trim() === '' ? null : Number(sort)) !== photo.sort ||
+      sortValue !== photo.sort ||
       [...member].sort().join() !== [...photo.collections].sort().join(),
   );
 
   /** Leave this photo (close or move) unless the user wants to keep unsaved edits. */
   function leave(go: () => void) {
     if (dirty && !confirm('Discard unsaved changes to this photo?')) return;
+    editorGuard.leaving = true; // already confirmed: don't ask again on the Back navigation
     go();
   }
+
+  // Let the router ask before the browser/phone Back button discards edits.
+  $effect(() => {
+    editorGuard.dirty = dirty;
+  });
+  $effect(() => () => Object.assign(editorGuard, { dirty: false, leaving: false }));
 
   async function setLocation(location: LocationChoice, done: string) {
     busy = true;
@@ -109,7 +122,7 @@
         featured,
         caption: caption.trim() || null,
         tags: parseTags(tags),
-        sort: sort.trim() === '' ? null : Number(sort),
+        sort: sortValue,
       });
       const before = new Set(photo.collections);
       const add = [...member].filter((c) => !before.has(c));

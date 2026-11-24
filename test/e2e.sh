@@ -137,6 +137,13 @@ curl -fsS $WEB/api/collections | jq_ 'd.find(x=>x.slug==="holiday").covers[0].sp
 [ "$(curl -fsS "$WEB/api/places?collection=holiday" | jq_ 'd.reduce((n,p)=>n+p.count,0)')" = 2 ] || fail "places filtered by collection"
 [ "$(code "$WEB/api/places?collection=../x")" = 400 ] || fail "bad collection id accepted by places"
 pass "collections: up to 4 cover tiles from the collection (chosen cover first); places per collection"
+C2=$(curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d '{"title":"Zebra","slug":"zebra"}' $ADMIN/api/collections | jq_ 'd.id')
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P3\"],\"addTo\":\"$C2\"}" $ADMIN/api/photos/bulk >/dev/null
+curl -fsS -X PUT "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$C2\",\"$COLL\"]}" $ADMIN/api/collections/order >/dev/null || fail "order collections"
+[ "$(curl -fsS $WEB/api/collections | jq_ 'd.map(c=>c.slug).join(",")')" = "zebra,holiday" ] || fail "collection order not applied"
+[ "$(code -X PUT "${AUTH[@]}" "${W[@]}" -d '{"ids":["../x"]}' $ADMIN/api/collections/order)" = 400 ] || fail "bad order body accepted"
+curl -fsS -X DELETE "${AUTH[@]}" -H "x-showcase-admin: 1" $ADMIN/api/collections/$C2 >/dev/null
+pass "collections: reorder saves the whole order at once"
 [ "$(curl -fsS "$WEB/api/photos?collection=holiday" | jq_ 'd.length')" = 2 ] || fail "public collection filter"
 p1=$(curl -fsS $WEB/api/photos/$P1)
 echo "$p1" | grep -q '"caption":"Hello world"' && echo "$p1" | grep -q '"title":"Holiday"' || fail "public photo edits: $p1"

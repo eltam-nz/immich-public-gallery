@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { AdminCollection, AdminPhoto, AdminPlace, PlaceRef } from '@showcase/shared';
+  import { untrack } from 'svelte';
   import { api, type LocationChoice } from './api';
   import PhotoEditor from './PhotoEditor.svelte';
   import PlacePicker from './PlacePicker.svelte';
@@ -42,7 +43,20 @@
   });
 
   const editing = $derived(route.photo ? photos.find((p) => p.id === route.photo) ?? null : null);
-  const editIndex = $derived(editing ? visiblePhotos.findIndex((p) => p.id === editing.id) : -1);
+
+  // While the editor is open, ‹ › and "Save & next" walk a snapshot of the list
+  // taken when it opened. Otherwise a photo that drops out of the filter after
+  // an edit (e.g. "No location" once a place is set) would strand the editor.
+  let navIds = $state<string[]>([]);
+  $effect(() => {
+    const id = route.photo;
+    untrack(() => {
+      if (!id) navIds = [];
+      else if (!navIds.includes(id)) navIds = visiblePhotos.map((p) => p.id);
+    });
+  });
+  const navList = $derived(navIds.filter((id) => photos.some((p) => p.id === id)));
+  const editIndex = $derived(editing ? navList.indexOf(editing.id) : -1);
   const allShownSelected = $derived(visiblePhotos.length > 0 && visiblePhotos.every((p) => selected.has(p.id)));
   const showSelBar = $derived(media.phone && (selecting || selected.size > 0));
   const collectionTitle = (id: string) => collections.find((c) => c.id === id)?.title ?? '';
@@ -113,8 +127,8 @@
   }
 
   function step(delta: number) {
-    const p = visiblePhotos[editIndex + delta];
-    if (p) openPhoto(p.id);
+    const id = navList[editIndex + delta];
+    if (id) openPhoto(id);
   }
 </script>
 
@@ -225,8 +239,8 @@
     {#key editing.id}
       <PhotoEditor photo={editing} {collections} {galleryPlaces}
         selectedIds={[...selected]}
-        position={editIndex >= 0 ? `${editIndex + 1} of ${visiblePhotos.length}` : ''}
-        hasPrev={editIndex > 0} hasNext={editIndex >= 0 && editIndex < visiblePhotos.length - 1}
+        position={editIndex >= 0 ? `${editIndex + 1} of ${navList.length}` : ''}
+        hasPrev={editIndex > 0} hasNext={editIndex >= 0 && editIndex < navList.length - 1}
         onprev={() => step(-1)} onnext={() => step(1)}
         onsaved={saved} onrefresh={onchange} onclose={closePhoto} />
     {/key}
