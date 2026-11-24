@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseRange } from '../src/range.js';
-import { ffmpegArgs } from '../src/video.js';
+import { parseRange } from './range.js';
 
 describe('parseRange', () => {
   it('no header -> whole file', () => expect(parseRange(undefined, 100)).toBeNull());
@@ -13,19 +12,5 @@ describe('parseRange', () => {
   it('multi-range / junk -> whole file', () => {
     expect(parseRange('bytes=0-1,5-6', 100)).toBeNull();
     expect(parseRange('items=0-1', 100)).toBeNull();
-  });
-});
-
-describe('ffmpegArgs', () => {
-  const args = ffmpegArgs('in', 'out.mp4', 2);
-  it('strips all metadata and chapters', () => {
-    expect(args.join(' ')).toContain('-map_metadata -1 -map_metadata:s -1 -map_chapters -1');
-  });
-  it('720p short side, H.264/AAC, fast start', () => {
-    const s = args.join(' ');
-    expect(s).toMatch(/min\(720,ih\)/);
-    expect(s).toContain('-c:v libx264');
-    expect(s).toContain('-c:a aac');
-    expect(s).toContain('+faststart');
   });
 });

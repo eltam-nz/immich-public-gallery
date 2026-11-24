@@ -2,7 +2,7 @@
 
 A self-hosted public photo site built from one shared Immich album. It runs as a Portainer stack and is published through a Cloudflare Tunnel. Immich itself is never exposed.
 
-**Status:** foundation, admin app, backups and the visitor-facing site are done. One Immich album is shared through a link key. Everything else is managed inside the gallery, from a private admin app: collections (sub-albums), captions, tags, visibility and each photo's place.
+**Status:** foundation, admin app, backups, the visitor-facing site and video support are done. One Immich album is shared through a link key. Everything else is managed inside the gallery, from a private admin app: collections (sub-albums), captions, tags, visibility and each photo's place.
 
 **The public site** is built for phones and older visitors: large text, high contrast, big labelled buttons and simple navigation (Home, collections, All photos, Map).
 - **Home page:**
@@ -100,7 +100,7 @@ Shared tunnel: your existing cloudflared ─(TUNNEL_NETWORK)→ public-web (alia
 - Create the Access application (step 3) **before** the admin route. Even if the route goes live first, the app rejects everyone, because no valid Access token exists yet.
 
 In the admin app:
-- **Photos:** show or hide photos, and edit captions, tags and sort order. Ticking **Featured** adds a photo to the home page's **Photography** section.
+- **Photos:** show or hide photos and videos, and edit captions, tags and sort order. The **Videos** and **Videos with warnings** filters list videos and their processing status. Ticking **Featured** adds a photo to the home page's **Photography** section.
 - **Copy to a group:** select photos, then open the photo to copy from (on a phone: **Actions → Copy from a photo…** and tap it). In its editor, **Copy to other photos** copies its caption and/or place to the selected ones. **Set caption…** in the bulk actions gives every selected photo the same caption, or clears them. Bulk-select to hide, show or feature photos, or add them to (or remove them from) a collection.
 - **Location:** each photo shows its town or city, worked out from its GPS. You can choose another place (search any town or city, or pick one already in the gallery), switch back to GPS, or hide the location.
   - **Copy a place to other photos:** tick the photos that need it, open a photo that already has the right place, and click **Apply \<place\> to N selected photos**.
@@ -160,7 +160,7 @@ Videos in the shared album are published as well as photos.
   - It checks the result before publishing.
   - This runs in the background, one video at a time and at low priority (`VIDEO_THREADS`, default 2), so syncing and the site stay responsive.
   - The first sync of an album with many videos can keep the CPU busy for a while.
-- **Publishing:** a video appears on the site once its 720p file is ready. Until then the admin app shows it as **Processing…**. If one can't be processed, the admin app marks it **Not published** with a ⚠ and the reason, and it's retried after 24 hours or when the video changes in Immich.
+- **Publishing:** a video appears on the site once its 720p file is ready. Until then the admin app shows it as **Processing…**. If one can't be processed, the admin app marks it **Not published** with a ⚠ and the reason, and it's retried after 24 hours or when the video changes in Immich. An encode that runs far longer than the video (10 minutes plus 4× its length) is treated as stuck, stopped and counted as a failure, so one bad file can't hold up the rest.
 - **Size warnings:** every video is published, whatever its size. The admin app shows a ⚠ on videos larger than `VIDEO_WARN_MB` (default 500 MB, measured as received from Immich). The **Videos with warnings** filter lists them.
 - **Disk:** 720p files take roughly 20 MB per minute of video, in `cache/`. Like images, they're rebuilt from Immich if deleted, so they don't need backing up.
 - **Playback:** the site plays videos with the browser's own player. Files are served with byte-range support, which iPhones need.
@@ -204,7 +204,8 @@ To run the admin UI locally against the test stack, use `KEEP=1 ./test/e2e.sh`. 
 apps/public-api    Fastify: sync job + read-only JSON/image API
 apps/public-web    Svelte 5 + Vite gallery, served by nginx
 apps/admin-app     Fastify API + Svelte 5 admin UI (Cloudflare Access protected)
-packages/shared    Public types + metadata allowlist (shared by API and web)
+packages/shared    Public types + metadata allowlist (shared by API and web);
+                   `@showcase/shared/node`: byte-range file serving for both servers
 packages/geo       Offline gazetteer: nearest city + place search (GeoNames data)
 db/                Migrations + one-shot migrator image
 deploy/nginx       nginx config (CSP, headers, proxy to API)

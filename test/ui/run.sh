@@ -3,7 +3,7 @@
 # screenshots at phone and desktop sizes, accessibility (axe-core), tap-target
 # and text sizes, no sideways scrolling, and the main admin phone workflows.
 #
-# Needs: Docker, `pnpm install`, Node with Playwright + Chromium available to
+# Needs: Docker, ffmpeg (for the test video), `pnpm install`, Node with Playwright + Chromium available to
 # `require('playwright')`, and axe-core (`npm install --prefix test/ui`).
 # Screenshots go to test/ui/shots and test/ui/admin-shots.
 #   ./test/ui/run.sh                 # builds images
@@ -18,6 +18,7 @@ export SITE_TITLE="Matt's Photo Diary" PUBLIC_SITE_URL=https://gallery.example.c
 export DATA_DIR=$(mktemp -d "${TMPDIR:-/tmp}/showcase-ui.XXXXXX")
 DC="docker compose -f docker-compose.yml -f docker-compose.test.yml"
 
+command -v ffmpeg >/dev/null || { echo "ffmpeg is needed to make the test video (e.g. apt install ffmpeg)"; exit 1; }
 node test/mock-immich/make-fixtures.mjs >/dev/null
 docker network inspect "$IMMICH_NETWORK" >/dev/null 2>&1 || docker network create "$IMMICH_NETWORK" >/dev/null
 $DC down -v --remove-orphans >/dev/null 2>&1 || true

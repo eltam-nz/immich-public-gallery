@@ -16,6 +16,7 @@ export BACKUP_KEEP=2
 export SHARED_LINK_KEYS=test-shared-link-key SYNC_INTERVAL_MINUTES=60 SITE_TITLE="E2E Photos"
 DC="docker compose -f docker-compose.yml -f docker-compose.test.yml"
 
+command -v ffmpeg >/dev/null || { echo "ffmpeg is needed to make the test video (e.g. apt install ffmpeg)"; exit 1; }
 node test/mock-immich/make-fixtures.mjs >/dev/null
 docker network inspect "$IMMICH_NETWORK" >/dev/null 2>&1 || docker network create "$IMMICH_NETWORK" >/dev/null
 $DC down -v --remove-orphans >/dev/null 2>&1 || true

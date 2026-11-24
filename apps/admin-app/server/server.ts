@@ -13,7 +13,7 @@ import type { AdminStatus } from '@showcase/shared';
 import Fastify, { LogController, type FastifyInstance, type FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AuthError, type Verifier } from './auth.js';
-import { sendFile } from './range.js';
+import { sendFile } from '@showcase/shared/node';
 import type { Config } from './config.js';
 import { placeById, searchPlaces } from '@showcase/geo';
 import { assetIds, knownPlace, listCollections, listPhotos, listPlaces, type Sql } from './queries.js';
@@ -169,10 +169,12 @@ export async function buildServer(cfg: Config, sql: Sql, verify: Verifier): Prom
                WHERE a.cached_version IS NOT NULL AND NOT pm.visible) AS hidden,
              (SELECT COUNT(*)::int FROM collections) AS collections`;
     const [videoCounts] = await sql<{ ready: number; processing: number; failed: number; large: number }[]>`
-      SELECT (COUNT(*) FILTER (WHERE video_version = version))::int AS ready,
-             (COUNT(*) FILTER (WHERE video_version IS DISTINCT FROM version
+      -- Same rules as each photo's badge (toAdminPhoto): ready = the published
+      -- version's file exists; failed = the latest version failed.
+      SELECT (COUNT(*) FILTER (WHERE video_version = cached_version))::int AS ready,
+             (COUNT(*) FILTER (WHERE video_version IS DISTINCT FROM cached_version
                                AND video_error_version IS DISTINCT FROM version))::int AS processing,
-             (COUNT(*) FILTER (WHERE video_version IS DISTINCT FROM version
+             (COUNT(*) FILTER (WHERE video_version IS DISTINCT FROM cached_version
                                AND video_error_version = version))::int AS failed,
              (COUNT(*) FILTER (WHERE source_bytes > ${cfg.VIDEO_WARN_MB * 1e6}))::int AS large
       FROM assets WHERE media_type = 'video' AND cached_version IS NOT NULL`;

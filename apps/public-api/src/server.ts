@@ -20,7 +20,7 @@ import type { Config } from './config.js';
 import type { Sql } from './db.js';
 import { PUBLIC_ID_RE, VERSION_RE } from './ids.js';
 import { imagePath, isSizeName } from './images.js';
-import { sendFile } from './range.js';
+import { sendFile } from '@showcase/shared/node';
 import { videoPath } from './video.js';
 
 const COLLECTION_PARAM_RE = /^[A-Za-z0-9_-]{1,64}$/;

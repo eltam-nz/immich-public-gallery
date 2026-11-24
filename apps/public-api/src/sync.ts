@@ -83,9 +83,9 @@ export class Syncer {
           transientFailure = true; // keep already-published photos rather than wiping the site
         } else {
           this.log.info(
-            { link: label, source: contents.source, expected, images: parsed },
-            `${label}: ${parsed} publishable images` +
-              (expected !== null && expected > parsed ? ` (${expected - parsed} videos/hidden/unavailable skipped)` : ''),
+            { link: label, source: contents.source, expected, assets: parsed },
+            `${label}: ${parsed} publishable photos and videos` +
+              (expected !== null && expected > parsed ? ` (${expected - parsed} hidden/unavailable skipped)` : ''),
           );
         }
         for (const asset of contents.assets) {

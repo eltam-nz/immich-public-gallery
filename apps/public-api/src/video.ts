@@ -44,25 +44,44 @@ export function ffmpegArgs(input: string, output: string, threads: number): stri
   ];
 }
 
-function run(cmd: string, args: string[]): Promise<string> {
+/** Run a command; it is killed (and the promise rejected) if it takes longer than `timeoutMs`. */
+function run(cmd: string, args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      p.kill('SIGKILL');
+    }, timeoutMs);
     p.stdout.on('data', (d: Buffer) => (out += d));
-    p.stderr.on('data', (d: Buffer) => (err += d));
-    p.on('error', reject);
-    p.on('close', (code) =>
-      code === 0 ? resolve(out) : reject(new Error(`${cmd} exited ${code}: ${err.trim().slice(-400)}`)),
-    );
+    p.stderr.on('data', (d: Buffer) => (err = (err + d).slice(-4000)));
+    p.on('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    p.on('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) reject(new Error(`${cmd} took longer than ${Math.round(timeoutMs / 60_000)} minutes and was stopped`));
+      else if (code === 0) resolve(out);
+      else reject(new Error(`${cmd} exited ${code}: ${err.trim().slice(-400)}`));
+    });
   });
 }
+
+/**
+ * How long an encode may take before it is treated as stuck: 10 minutes plus
+ * 4x the video's length (2 hours when the length is unknown).
+ */
+export const encodeTimeoutMs = (durationMs: number | null) =>
+  durationMs ? 10 * 60_000 + 4 * durationMs : 2 * 60 * 60_000;
 
 /** Check the encoded file really is a playable H.264 video. */
 async function probe(file: string): Promise<{ width: number; height: number }> {
   const out = await run('ffprobe', [
     '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name,width,height', '-of', 'json', file,
-  ]);
+  ], 2 * 60_000);
   const s = (JSON.parse(out) as { streams?: { codec_name?: string; width?: number; height?: number }[] }).streams?.[0];
   if (!s || s.codec_name !== 'h264' || !s.width || !s.height) throw new Error('encoded file failed verification');
   return { width: s.width, height: s.height };
@@ -72,6 +91,7 @@ interface Job {
   public_id: string;
   immich_asset_id: string;
   version: string;
+  duration_ms: number | null;
 }
 
 export class VideoWorker {
@@ -111,7 +131,7 @@ export class VideoWorker {
     // Videos whose poster is ready but whose 720p file isn't, skipping recent
     // failures of the same version.
     const [job] = await this.sql<Job[]>`
-      SELECT public_id, immich_asset_id, version FROM assets
+      SELECT public_id, immich_asset_id, version, duration_ms FROM assets
       WHERE media_type = 'video' AND cached_version = version
         AND video_version IS DISTINCT FROM version
         AND NOT (video_error_version IS NOT DISTINCT FROM version
@@ -122,7 +142,10 @@ export class VideoWorker {
   }
 
   private async drain(): Promise<void> {
+    // Only one pass runs at a time, so anything already in .tmp was left by a
+    // pass that was cut short (e.g. a restart mid-download): clear it out.
     const tmpDir = join(this.cfg.CACHE_DIR, '.tmp');
+    await rm(tmpDir, { recursive: true, force: true });
     await mkdir(tmpDir, { recursive: true });
     for (let job = await this.next(); job; job = await this.next()) {
       const key = this.keyFor(job.immich_asset_id);
@@ -136,15 +159,24 @@ export class VideoWorker {
       const started = Date.now();
       try {
         const sourceBytes = await this.immich.downloadVideo(job.immich_asset_id, key, src);
-        await run('nice', ['-n', '10', 'ffmpeg', ...ffmpegArgs(src, tmpOut, this.cfg.VIDEO_THREADS)]);
+        await run(
+          'nice',
+          ['-n', '10', 'ffmpeg', ...ffmpegArgs(src, tmpOut, this.cfg.VIDEO_THREADS)],
+          encodeTimeoutMs(job.duration_ms),
+        );
         const dims = await probe(tmpOut);
         const final = videoPath(this.cfg.CACHE_DIR, job.public_id, job.version);
         await rename(tmpOut, final);
         const { size } = await stat(final);
-        await this.sql`
+        const res = await this.sql`
           UPDATE assets SET video_version = ${job.version}, video_bytes = ${size}, source_bytes = ${sourceBytes},
                  video_error = NULL, video_error_version = NULL, video_error_at = NULL
           WHERE public_id = ${job.public_id} AND version = ${job.version}`;
+        if (res.count === 0) {
+          // Changed in Immich (or removed) while encoding: this file is out of date.
+          await rm(final, { force: true });
+          continue;
+        }
         this.log.info(
           { publicId: job.public_id, sourceMB: +(sourceBytes / 1e6).toFixed(1), outMB: +(size / 1e6).toFixed(1), ...dims, s: Math.round((Date.now() - started) / 1000) },
           'video ready',

@@ -1,10 +1,10 @@
 /**
- * Serving cached files with HTTP Range support. Browsers (Safari on iPhone in
- * particular) fetch video in byte ranges and won't play it without 206 replies.
+ * Serving cached files with HTTP Range support (Node only; used by both
+ * servers). Browsers (Safari on iPhone in particular) fetch video in byte
+ * ranges and won't play it without 206 replies.
  */
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import type { FastifyReply } from 'fastify';
 
 export type ByteRange = { start: number; end: number };
 
@@ -33,25 +33,32 @@ export function parseRange(header: string | undefined, size: number): ByteRange 
   return { start, end };
 }
 
+/** The parts of a Fastify reply used here (kept structural so this package needs no Fastify). */
+interface Reply {
+  code(statusCode: number): Reply;
+  header(key: string, value: string | number): Reply;
+  send(payload?: unknown): Reply;
+}
+
 /** Send a file (whole or the requested range); 404 if it's missing. */
-export async function sendFile(
-  reply: FastifyReply,
+export async function sendFile<R extends Reply>(
+  reply: R,
   path: string,
   opts: { type: string; cacheControl: string; range?: string },
-): Promise<FastifyReply> {
+): Promise<R> {
   const st = await stat(path).catch(() => null);
-  if (!st?.isFile()) return reply.code(404).send({ error: 'not_found' });
+  if (!st?.isFile()) return reply.code(404).send({ error: 'not_found' }) as R;
   reply.header('content-type', opts.type).header('accept-ranges', 'bytes').header('cache-control', opts.cacheControl);
   const range = parseRange(opts.range, st.size);
   if (range === 'unsatisfiable') {
-    return reply.code(416).header('content-range', `bytes */${st.size}`).send();
+    return reply.code(416).header('content-range', `bytes */${st.size}`).send() as R;
   }
   if (range) {
     return reply
       .code(206)
       .header('content-range', `bytes ${range.start}-${range.end}/${st.size}`)
       .header('content-length', range.end - range.start + 1)
-      .send(createReadStream(path, { start: range.start, end: range.end }));
+      .send(createReadStream(path, { start: range.start, end: range.end })) as R;
   }
-  return reply.header('content-length', st.size).send(createReadStream(path));
+  return reply.header('content-length', st.size).send(createReadStream(path)) as R;
 }
