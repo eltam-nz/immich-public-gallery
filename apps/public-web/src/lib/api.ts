@@ -34,6 +34,12 @@ export const api = {
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** "12 photos · 2 videos", "12 photos" or "2 videos" from a total and its videos. */
+export const mediaCount = (total: number, videos = 0) =>
+  [total - videos > 0 || videos === 0 ? plural(total - videos, 'photo') : '', videos ? plural(videos, 'video') : '']
+    .filter(Boolean)
+    .join(' · ');
+
 const monthYear = (d: Date) => d.toLocaleDateString(undefined, { month: 'short', year: 'numeric', timeZone: 'UTC' });
 
 /** "Jun 2024", "Jun – Aug 2024" or "Jun 2024 – Jan 2025" for a YYYY-MM-DD range. */

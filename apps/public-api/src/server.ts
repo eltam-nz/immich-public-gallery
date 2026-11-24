@@ -20,6 +20,8 @@ import type { Config } from './config.js';
 import type { Sql } from './db.js';
 import { PUBLIC_ID_RE, VERSION_RE } from './ids.js';
 import { imagePath, isSizeName } from './images.js';
+import { sendFile } from './range.js';
+import { videoPath } from './video.js';
 
 const COLLECTION_PARAM_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const PLACE_PARAM_RE = /^g\d{1,10}$/;
@@ -27,6 +29,13 @@ const PLACE_PARAM_RE = /^g\d{1,10}$/;
 /** The place a photo publishes: chosen place, nearest city from GPS, or none. */
 export const EFFECTIVE_PLACE = `CASE COALESCE(pm.location_mode, 'auto')
   WHEN 'hidden' THEN NULL WHEN 'place' THEN pm.location_place ELSE a.place END`;
+
+/**
+ * What counts as published: the poster/photo is cached, and for a video the
+ * 720p file is ready too. `t` is the table alias.
+ */
+export const published = (t: string) =>
+  `${t}.cached_version IS NOT NULL AND (${t}.media_type = 'image' OR ${t}.video_version = ${t}.cached_version)`;
 
 /**
  * Visible, fully-cached photos joined with admin overrides and their visible
@@ -51,11 +60,12 @@ function photoQuery(
                                      ORDER BY c.sort, c.title), '[]'::json)
               FROM collection_photos cp JOIN collections c ON c.id = cp.collection_id
              WHERE cp.immich_asset_id = a.immich_asset_id AND c.visible) AS collections,
+           a.media_type, a.duration_ms,
            pm.caption, pm.tags, pm.featured, ${place} AS place, pm.custom
     FROM assets a
     ${inCollection}
     LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
-    WHERE a.cached_version IS NOT NULL
+    WHERE ${sql.unsafe(published('a'))}
       AND COALESCE(pm.visible, true)
       ${opts.publicId ? sql`AND a.public_id = ${opts.publicId}` : sql``}
       ${opts.place ? sql`AND (${place})->>'id' = ${opts.place}` : sql``}
@@ -124,7 +134,7 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
         FROM assets a
         ${inCollection}
         LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
-        WHERE a.cached_version IS NOT NULL AND COALESCE(pm.visible, true)
+        WHERE ${sql.unsafe(published('a'))} AND COALESCE(pm.visible, true)
       )
       SELECT place->>'id' AS id, place->>'name' AS name, place->>'country' AS country,
              (place->>'lat')::float8 AS lat, (place->>'lon')::float8 AS lon,
@@ -154,14 +164,15 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
     })[]>`
       SELECT c.id AS pk, c.public_id AS id, c.slug, c.title, c.description,
              COUNT(a.public_id)::int AS count,
+             (COUNT(a.public_id) FILTER (WHERE a.media_type = 'video'))::int AS videos,
              to_char(MIN(a.taken_at), 'YYYY-MM-DD') AS first, to_char(MAX(a.taken_at), 'YYYY-MM-DD') AS last,
              ca.public_id AS cover_id, ca.cached_version AS cover_version
       FROM collections c
       JOIN collection_photos cp ON cp.collection_id = c.id
-      JOIN assets a ON a.immich_asset_id = cp.immich_asset_id AND a.cached_version IS NOT NULL
+      JOIN assets a ON a.immich_asset_id = cp.immich_asset_id AND ${sql.unsafe(published('a'))}
       LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
       -- Explicit cover, only if it is itself published, visible and still in the collection.
-      LEFT JOIN assets ca ON ca.immich_asset_id = c.cover_asset_id AND ca.cached_version IS NOT NULL
+      LEFT JOIN assets ca ON ca.immich_asset_id = c.cover_asset_id AND ${sql.unsafe(published('ca'))}
            AND EXISTS (SELECT 1 FROM collection_photos ccp WHERE ccp.collection_id = c.id AND ccp.immich_asset_id = ca.immich_asset_id)
            AND NOT EXISTS (SELECT 1 FROM photos_meta cpm WHERE cpm.immich_asset_id = ca.immich_asset_id AND NOT cpm.visible)
       WHERE c.visible AND COALESCE(pm.visible, true)
@@ -173,7 +184,7 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
                ntile(4) OVER (PARTITION BY cp.collection_id ORDER BY a.taken_at NULLS LAST, a.public_id) AS q
         FROM collection_photos cp
         JOIN collections c ON c.id = cp.collection_id AND c.visible
-        JOIN assets a ON a.immich_asset_id = cp.immich_asset_id AND a.cached_version IS NOT NULL
+        JOIN assets a ON a.immich_asset_id = cp.immich_asset_id AND ${sql.unsafe(published('a'))}
         LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
         WHERE COALESCE(pm.visible, true)
       )
@@ -202,22 +213,23 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
   // "Featured photography": the photos ticked Featured in the admin app, shown as
   // their own section on the home page. Four random tiles spread across them.
   app.get('/api/featured', async (): Promise<PublicFeatured> => {
-    const [summary] = await sql<{ count: number; first: string | null; last: string | null }[]>`
-      SELECT COUNT(*)::int AS count,
+    const [summary] = await sql<{ count: number; videos: number; first: string | null; last: string | null }[]>`
+      SELECT COUNT(*)::int AS count, (COUNT(*) FILTER (WHERE a.media_type = 'video'))::int AS videos,
              to_char(MIN(a.taken_at), 'YYYY-MM-DD') AS first, to_char(MAX(a.taken_at), 'YYYY-MM-DD') AS last
       FROM assets a JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
-      WHERE a.cached_version IS NOT NULL AND pm.visible AND pm.featured`;
+      WHERE ${sql.unsafe(published('a'))} AND pm.visible AND pm.featured`;
     const picks = await sql<{ public_id: string; cached_version: string }[]>`
       SELECT public_id, cached_version FROM (
         SELECT DISTINCT ON (q) q, public_id, cached_version FROM (
           SELECT a.public_id, a.cached_version,
                  ntile(4) OVER (ORDER BY a.taken_at NULLS LAST, a.public_id) AS q
           FROM assets a JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
-          WHERE a.cached_version IS NOT NULL AND pm.visible AND pm.featured
+          WHERE ${sql.unsafe(published('a'))} AND pm.visible AND pm.featured
         ) m ORDER BY q, random()
       ) x ORDER BY q`;
     return {
       count: summary?.count ?? 0,
+      videos: summary?.videos ?? 0,
       dateRange: summary?.first && summary.last ? { from: summary.first, to: summary.last } : null,
       covers: picks.map((p) => imageUrl(p.public_id, p.cached_version, 'thumb')),
     };
@@ -237,7 +249,7 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
         SELECT 1 FROM assets a
         LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
         WHERE a.public_id = ${id} AND a.cached_version = ${version}
-          AND COALESCE(pm.visible, true)`;
+          AND ${sql.unsafe(published('a'))} AND COALESCE(pm.visible, true)`;
       if (!row) return reply.code(404).send({ error: 'not_found' });
 
       const path = imagePath(cfg.CACHE_DIR, id, version, size);
@@ -250,6 +262,25 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
         .send(createReadStream(path));
     },
   );
+
+  // /video/<publicId>/<version>.mp4 — the 720p re-encode, from the local cache,
+  // with Range support (needed for playback on iPhones).
+  app.get<{ Params: { id: string; file: string } }>('/video/:id/:file', async (req, reply) => {
+    const { id, file } = req.params;
+    const version = file.endsWith('.mp4') ? file.slice(0, -4) : '';
+    if (!PUBLIC_ID_RE.test(id) || !VERSION_RE.test(version)) return reply.code(404).send({ error: 'not_found' });
+    const [row] = await sql`
+      SELECT 1 FROM assets a
+      LEFT JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
+      WHERE a.public_id = ${id} AND a.media_type = 'video' AND a.video_version = ${version}
+        AND ${sql.unsafe(published('a'))} AND COALESCE(pm.visible, true)`;
+    if (!row) return reply.code(404).send({ error: 'not_found' });
+    return sendFile(reply, videoPath(cfg.CACHE_DIR, id, version), {
+      type: 'video/mp4',
+      cacheControl: 'public, max-age=31536000, immutable',
+      range: req.headers.range,
+    });
+  });
 
   return app;
 }

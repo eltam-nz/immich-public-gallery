@@ -1,6 +1,7 @@
 import {
   cameraLabel,
   imageUrl,
+  videoUrl,
   type AdminCollection,
   type AdminPhoto,
   type AdminPlace,
@@ -29,16 +30,45 @@ interface PhotoDbRow {
   location_place: PlaceRef | null;
   effective_place: PlaceRef | null;
   collections: string[];
+  media_type: 'image' | 'video';
+  duration_ms: number | null;
+  video_version: string | null;
+  video_bytes: string | null; // bigint arrives as a string
+  source_bytes: string | null;
+  video_error: string | null;
+  video_error_version: string | null;
+  asset_version: string;
 }
+
+const mb = (b: string | null) => (b === null ? null : Math.round((Number(b) / 1e6) * 10) / 10);
 
 /** Same rule as the public API: chosen place, nearest city from GPS, or none. */
 export const EFFECTIVE_PLACE = `CASE COALESCE(pm.location_mode, 'auto')
   WHEN 'hidden' THEN NULL WHEN 'place' THEN pm.location_place ELSE a.place END`;
 
-function toAdminPhoto(r: PhotoDbRow): AdminPhoto {
+function toAdminPhoto(r: PhotoDbRow, warnMB: number): AdminPhoto {
   const m = r.meta ?? {};
+  const isVideo = r.media_type === 'video';
+  const ready = isVideo && r.video_version === r.version;
+  const failed = isVideo && !ready && r.video_error !== null && r.video_error_version === r.asset_version;
+  const sourceMB = mb(r.source_bytes);
+  const videoWarning = !isVideo
+    ? null
+    : failed
+      ? `Couldn't process this video: ${r.video_error}`
+      : sourceMB !== null && sourceMB > warnMB
+        ? `Large video: ${sourceMB >= 1000 ? `${(sourceMB / 1000).toFixed(1)} GB` : `${Math.round(sourceMB)} MB`} from Immich (over ${warnMB} MB)`
+        : null;
   return {
     id: r.public_id,
+    type: isVideo ? 'video' : 'image',
+    duration: r.duration_ms,
+    videoStatus: !isVideo ? null : ready ? 'ready' : failed ? 'failed' : 'processing',
+    videoError: failed ? r.video_error : null,
+    sourceMB,
+    videoMB: ready ? mb(r.video_bytes) : null,
+    videoSrc: ready ? videoUrl(r.public_id, r.version) : null,
+    videoWarning,
     width: r.width,
     height: r.height,
     takenAt: r.taken_at,
@@ -62,13 +92,15 @@ function toAdminPhoto(r: PhotoDbRow): AdminPhoto {
 }
 
 /** All synced photos (including hidden ones), newest first. */
-export async function listPhotos(sql: Sql, publicId?: string): Promise<AdminPhoto[]> {
+export async function listPhotos(sql: Sql, publicId?: string, warnMB = 500): Promise<AdminPhoto[]> {
   const rows = await sql<PhotoDbRow[]>`
     SELECT a.public_id, a.cached_version AS version, a.width, a.height,
            to_char(a.taken_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS taken_at, a.meta,
            COALESCE(pm.visible, true) AS visible, pm.caption,
            COALESCE(pm.tags, '{}') AS tags, COALESCE(pm.featured, false) AS featured,
            pm.sort, a.place AS gps_place,
+           a.media_type, a.duration_ms, a.video_version, a.video_bytes::text, a.source_bytes::text,
+           a.video_error, a.video_error_version, a.version AS asset_version,
            COALESCE(pm.location_mode, 'auto') AS location_mode, pm.location_place,
            ${sql.unsafe(EFFECTIVE_PLACE)} AS effective_place,
            (SELECT COALESCE(array_agg(c.public_id ORDER BY c.sort, c.title), '{}')
@@ -79,7 +111,7 @@ export async function listPhotos(sql: Sql, publicId?: string): Promise<AdminPhot
     WHERE a.cached_version IS NOT NULL
       ${publicId ? sql`AND a.public_id = ${publicId}` : sql``}
     ORDER BY pm.sort ASC NULLS LAST, a.taken_at DESC NULLS LAST, a.public_id`;
-  return rows.map(toAdminPhoto);
+  return rows.map((r) => toAdminPhoto(r, warnMB));
 }
 
 export async function listCollections(sql: Sql, publicId?: string): Promise<AdminCollection[]> {

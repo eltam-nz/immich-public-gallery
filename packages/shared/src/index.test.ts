@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cameraLabel, sanitizeExif, toPublicPhoto, type PhotoRow } from './index.js';
+import { cameraLabel, formatDuration, sanitizeExif, toPublicPhoto, type PhotoRow } from './index.js';
 
 describe('sanitizeExif', () => {
   it('keeps only allowlisted fields', () => {
@@ -64,5 +64,28 @@ describe('toPublicPhoto', () => {
 
   it('never exposes internal ids', () => {
     expect(JSON.stringify(toPublicPhoto(row))).not.toMatch(/immich/i);
+  });
+});
+
+describe('videos', () => {
+  const base: PhotoRow = {
+    public_id: 'abcdefghijklmnop', version: 'abcdef123456', width: 1280, height: 720, taken_at: null, meta: {},
+    collections: null, caption: null, tags: null, featured: null, place: null, custom: null,
+  };
+  it('photos have no video', () => {
+    const p = toPublicPhoto(base);
+    expect(p.type).toBe('image');
+    expect(p.video).toBeNull();
+  });
+  it('videos get the 720p file URL and duration', () => {
+    const p = toPublicPhoto({ ...base, media_type: 'video', duration_ms: 42_000 });
+    expect(p.type).toBe('video');
+    expect(p.video).toEqual({ src: '/video/abcdefghijklmnop/abcdef123456.mp4', duration: 42_000 });
+  });
+  it('formats durations', () => {
+    expect(formatDuration(42_000)).toBe('0:42');
+    expect(formatDuration(725_000)).toBe('12:05');
+    expect(formatDuration(3_723_000)).toBe('1:02:03');
+    expect(formatDuration(null)).toBe('');
   });
 });

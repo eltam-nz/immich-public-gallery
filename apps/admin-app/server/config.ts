@@ -25,6 +25,8 @@ const schema = z.object({
   CF_ACCESS_JWKS_URL: z.string().url().optional(),
   CACHE_DIR: z.string().default('/cache'),
   PUBLIC_SITE_URL: z.string().url().optional().or(z.literal('').transform(() => undefined)),
+  /** Show a warning on videos larger than this (MB, as received from Immich). */
+  VIDEO_WARN_MB: z.coerce.number().min(1).default(500),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 });
 

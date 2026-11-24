@@ -31,11 +31,12 @@ cleanup() {
 trap cleanup EXIT
 
 json() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const d=JSON.parse(s);console.log($1)})"; }
-for i in $(seq 1 90); do
-  n=$(curl -fsS http://127.0.0.1:8088/api/photos 2>/dev/null | json 'd.length' 2>/dev/null || echo 0)
-  [ "$n" = 15 ] && break; sleep 1
+# 15 photos, and the mock's playable video once it has been re-encoded.
+for i in $(seq 1 120); do
+  n=$(curl -fsS http://127.0.0.1:8088/api/photos 2>/dev/null | json 'd.filter(p=>p.type==="image").length+"/"+d.filter(p=>p.type==="video").length' 2>/dev/null || echo 0)
+  [ "$n" = 15/1 ] && break; sleep 1
 done
-[ "$n" = 15 ] || { echo "stack did not publish 15 photos (got $n)"; exit 1; }
+[ "$n" = 15/1 ] || { echo "stack did not publish 15 photos and 1 video (got $n)"; exit 1; }
 
 # Seed: three collections; New Zealand gets six NZ photos, the others start empty.
 export ACCESS_TOKEN=$(curl -fsS "http://127.0.0.1:2283/__control/sign?email=admin@example.com&exp=7200")
@@ -52,6 +53,7 @@ curl -fsS -X POST "${H[@]}" -d "{\"ids\":$NZ_IDS,\"addTo\":\"$NZ\"}" $A/api/phot
 FEAT=$(curl -fsS "${H[@]}" $A/api/photos | json 'JSON.stringify(d.slice(-4).map(p=>p.id))')
 curl -fsS -X POST "${H[@]}" -d "{\"ids\":$FEAT,\"set\":{\"featured\":true}}" $A/api/photos/bulk >/dev/null
 export PHOTO_ID=$(curl -fsS http://127.0.0.1:8088/api/photos | json 'd[0].id')
+export VIDEO_ID=$(curl -fsS http://127.0.0.1:8088/api/photos | json 'd.find(p=>p.type==="video").id')
 
 status=0
 node test/ui/public-check.cjs || status=1

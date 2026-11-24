@@ -66,6 +66,7 @@ services:
       SHARED_LINK_KEYS: ${SHARED_LINK_KEYS:-}
       PUBLIC_ID_SECRET: ${PUBLIC_ID_SECRET:?set PUBLIC_ID_SECRET}
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
+      VIDEO_THREADS: ${VIDEO_THREADS:-2}
       SITE_TITLE: ${SITE_TITLE:-Photos}
       CACHE_DIR: /cache
     volumes:
@@ -122,6 +123,7 @@ services:
       CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
+      VIDEO_WARN_MB: ${VIDEO_WARN_MB:-500}
       CACHE_DIR: /cache
     volumes:
       - ${DATA_DIR:-/srv/docker/immich-showcase}/cache:/cache:ro

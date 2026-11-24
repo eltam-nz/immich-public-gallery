@@ -32,14 +32,17 @@ trap cleanup EXIT
 WEB=http://127.0.0.1:8088
 fail() { echo "FAIL: $*"; $DC logs public-api | tail -30; exit 1; }
 pass() { echo "ok   $*"; }
-count() { curl -fsS $WEB/api/photos 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).length)}catch{console.log(-1)}})' || echo -1; }
+jq_() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const d=JSON.parse(s);console.log($1)})"; }
+# Published photos (videos are checked separately).
+count() { curl -fsS $WEB/api/photos 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).filter(p=>p.type==="image").length)}catch{console.log(-1)}})' || echo -1; }
+videos() { curl -fsS $WEB/api/photos 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.stringify(JSON.parse(s).filter(p=>p.type==="video")))}catch{console.log("[]")}})' || echo '[]'; }
 
 for i in $(seq 1 60); do
   n=$(count)
   [ "$n" = 3 ] && break; sleep 1
 done
-[ "$n" = 3 ] || fail "expected 3 photos (videos excluded), got $n"
-pass "sync: 3 images published, video skipped"
+[ "$n" = 3 ] || fail "expected 3 photos, got $n"
+pass "sync: 3 photos published"
 
 # Data lives in bind mounts under DATA_DIR (stat works without read access to the folders).
 [ "$(stat -c %u "$DATA_DIR/postgres")" = 70 ] || fail "postgres data not in $DATA_DIR/postgres"
@@ -82,15 +85,35 @@ calls=$(curl -fsS http://127.0.0.1:2283/__control/requests)
 echo "$calls" | node -e '
 let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
   const ok=[/^GET \/api\/shared-links\/me$/,/^GET \/api\/albums\/[0-9a-f-]{36}$/,/^GET \/api\/assets\/[0-9a-f-]{36}\/thumbnail\?size=preview$/,
-    /^GET \/api\/timeline\/buckets$/,/^GET \/api\/timeline\/bucket$/,/^GET \/api\/assets\/[0-9a-f-]{36}$/,/^GET \/api\/server\/version$/];
+    /^GET \/api\/timeline\/buckets$/,/^GET \/api\/timeline\/bucket$/,/^GET \/api\/assets\/[0-9a-f-]{36}$/,/^GET \/api\/server\/version$/,
+    /^GET \/api\/assets\/[0-9a-f-]{36}\/video\/playback$/];
   const bad=JSON.parse(s).filter(r=>!ok.some(re=>re.test(r)));
   if(bad.length){console.error("unexpected Immich calls:",bad);process.exit(1)}})' || fail "public-api called non-allowlisted Immich endpoints"
 pass "public-api only called allowlisted Immich endpoints"
 
+# ---------------- Videos ----------------
+# The good video is re-encoded in the background; the corrupt one never publishes.
+for i in $(seq 1 120); do v=$(videos); [ "$(echo "$v" | jq_ 'd.length')" = 1 ] && break; sleep 1; done
+[ "$(echo "$v" | jq_ 'd.length')" = 1 ] || fail "expected 1 published video, got: $v $($DC logs public-api 2>&1 | grep -i video | tail -3)"
+VSRC=$(echo "$v" | jq_ 'd[0].video.src'); VDUR=$(echo "$v" | jq_ 'd[0].video.duration')
+[ "$VDUR" = 3000 ] || fail "video duration $VDUR"
+echo "$VSRC" | grep -qE '^/video/[A-Za-z0-9_-]{16}/[a-f0-9]{12}\.mp4$' || fail "video src $VSRC"
+VFILE=$(mktemp); curl -fsS -o "$VFILE" "$WEB$VSRC" || fail "video not served"
+hdr=$(curl -s -D - -o /dev/null -H 'Range: bytes=0-99' "$WEB$VSRC")
+echo "$hdr" | grep -q '^HTTP/1.1 206' && echo "$hdr" | grep -qi '^content-range: bytes 0-99/' || fail "no Range support: $hdr"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Range: bytes=999999999-' "$WEB$VSRC")" = 416 ] || fail "bad range not 416"
+probe=$($DC exec -T public-api ffprobe -v error -show_entries format_tags:stream_tags:stream=codec_name,height:stream_side_data -of json -i pipe:0 < "$VFILE")
+echo "$probe" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);
+  const v=j.streams.find(x=>x.codec_name==="h264"), a=j.streams.find(x=>x.codec_name==="aac");
+  const text=JSON.stringify(j);
+  const bad=/location|ISO6709|creation_time|"make"|"model"|apple|iphone|rotate|displaymatrix|51\.50/i.test(text);
+  if(!v||!a||v.height!==720||bad){console.error(text);process.exit(1)}})' || fail "served video not 720p H.264/AAC without metadata"
+rm -f "$VFILE"
+pass "videos: re-encoded to 720p H.264/AAC, metadata stripped, served with Range support"
+
 # ---------------- Admin app ----------------
 ADMIN=http://127.0.0.1:8089
 MOCK=http://127.0.0.1:2283
-jq_() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const d=JSON.parse(s);console.log($1)})"; }
 token() { curl -fsS "$MOCK/__control/sign?$1"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 TOKEN=$(token "email=admin@example.com")
@@ -107,11 +130,26 @@ curl -fsS "${AUTH[@]}" $ADMIN/api/status | grep -q '"email":"admin@example.com"'
 curl -fsS "${AUTH[@]}" $ADMIN/ | grep -q '<div id="app">' || fail "admin UI not served"
 pass "admin: Cloudflare Access token required (audience, expiry, email checked)"
 
+# Admin sees both videos: the good one ready (with a size warning, as the test
+# threshold is 1 MB) and the corrupt one failed, unpublished.
+av=$(curl -fsS "${AUTH[@]}" $ADMIN/api/photos | jq_ 'JSON.stringify(d.filter(p=>p.type==="video").map(p=>({s:p.videoStatus,w:p.videoWarning,src:p.videoSrc,id:p.id})))')
+echo "$av" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);
+  const ok=v.length===2 && v.some(x=>x.s==="ready"&&/Large video/.test(x.w||"")&&x.src) && v.some(x=>x.s==="failed"&&/process/.test(x.w||"")&&!x.src);
+  if(!ok){console.error(s);process.exit(1)}})' || fail "admin video status/warnings: $av"
+GOODV=$(echo "$av" | jq_ 'd.find(x=>x.s==="ready").id'); GSRC=$(echo "$av" | jq_ 'd.find(x=>x.s==="ready").src')
+[ "$(code "${AUTH[@]}" -H 'Range: bytes=0-9' $ADMIN$GSRC)" = 206 ] || fail "admin cannot play video"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$GOODV\"],\"set\":{\"visible\":false}}" $ADMIN/api/photos/bulk >/dev/null
+[ "$(videos | jq_ 'd.length')" = 0 ] && [ "$(code $WEB$GSRC)" = 404 ] || fail "hidden video still public"
+[ "$(code "${AUTH[@]}" $ADMIN$GSRC)" = 200 ] || fail "admin cannot see hidden video"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$GOODV\"],\"set\":{\"visible\":true}}" $ADMIN/api/photos/bulk >/dev/null
+curl -fsS "${AUTH[@]}" $ADMIN/api/status | grep -q '"videos":{"ready":1,"processing":0,"failed":1,"large":1}' || fail "admin video counts: $(curl -fsS "${AUTH[@]}" $ADMIN/api/status)"
+pass "admin: video status, size warning, failed encode, hiding a video"
+
 [ "$(code -X POST "${AUTH[@]}" -H 'content-type: application/json' -d '{}' $ADMIN/api/sync)" = 403 ] || fail "mutation without CSRF header accepted"
 [ "$(code -X POST "${AUTH[@]}" "${W[@]}" -H 'sec-fetch-site: cross-site' -d '{}' $ADMIN/api/sync)" = 403 ] || fail "cross-site mutation accepted"
 pass "admin: changes need the CSRF header and a same-origin request"
 
-ids=$(curl -fsS "${AUTH[@]}" $ADMIN/api/photos | jq_ 'd.map(p=>p.id).join(" ")')
+ids=$(curl -fsS "${AUTH[@]}" $ADMIN/api/photos | jq_ 'd.filter(p=>p.type==="image").map(p=>p.id).join(" ")')
 read -r P1 P2 P3 <<<"$ids"
 [ -n "$P3" ] || fail "admin photo list: $ids"
 COLL=$(curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d '{"title":"Holiday","slug":"holiday","description":"Trip"}' $ADMIN/api/collections | jq_ 'd.id')

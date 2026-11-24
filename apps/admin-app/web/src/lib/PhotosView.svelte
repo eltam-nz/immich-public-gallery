@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AdminCollection, AdminPhoto, AdminPlace, PlaceRef } from '@showcase/shared';
   import { untrack } from 'svelte';
+  import { formatDuration } from '@showcase/shared';
   import { api, type LocationChoice } from './api';
   import PhotoEditor from './PhotoEditor.svelte';
   import PlacePicker from './PlacePicker.svelte';
@@ -29,7 +30,7 @@
   let pickSource = $state(false);
   let bulkCollection = $state('');
   let pickingPlace = $state(false); // desktop inline picker
-  const FIXED_FILTERS = ['all', 'hidden', 'featured', 'none', 'noplace'];
+  const FIXED_FILTERS = ['all', 'hidden', 'featured', 'none', 'noplace', 'videos', 'videowarn'];
 
   const visiblePhotos = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -38,6 +39,8 @@
       if (filter === 'featured' && !p.featured) return false;
       if (filter === 'none' && p.collections.length) return false;
       if (filter === 'noplace' && p.effectivePlace) return false;
+      if (filter === 'videos' && p.type !== 'video') return false;
+      if (filter === 'videowarn' && !p.videoWarning) return false;
       if (!FIXED_FILTERS.includes(filter) && !p.collections.includes(filter)) return false;
       if (!q) return true;
       return [p.caption, p.description, p.effectivePlace?.name, p.camera, p.lens, ...p.tags]
@@ -197,6 +200,10 @@
         <option value="featured">Featured ({photos.filter((p) => p.featured).length})</option>
         <option value="none">Not in a collection ({photos.filter((p) => !p.collections.length).length})</option>
         <option value="noplace">No location ({photos.filter((p) => !p.effectivePlace).length})</option>
+        {#if photos.some((p) => p.type === 'video')}
+          <option value="videos">Videos ({photos.filter((p) => p.type === 'video').length})</option>
+          <option value="videowarn">Videos with warnings ({photos.filter((p) => p.videoWarning).length})</option>
+        {/if}
         {#if collections.length}
           <optgroup label="Collections">
             {#each collections as c (c.id)}<option value={c.id}>{c.title} ({c.count})</option>{/each}
@@ -238,16 +245,22 @@
             <input type="checkbox" class="pick" checked={selected.has(p.id)} onchange={() => { toggle(p.id); lastIndex = i; }}
               aria-label={`Select photo ${i + 1}`} />
           {/if}
-          <button class="thumb" onclick={(e) => tileClick(e, p, i)}
-            aria-label={`${selecting ? (selected.has(p.id) ? 'Deselect' : 'Select') : 'Edit'} photo ${i + 1}${p.caption ? `: ${p.caption}` : ''}`}
+          <button class="thumb" onclick={(e) => tileClick(e, p, i)} title={p.videoWarning ?? undefined}
+            aria-label={`${selecting ? (selected.has(p.id) ? 'Deselect' : 'Select') : 'Edit'} ${p.type === 'video' ? 'video' : 'photo'} ${i + 1}${p.caption ? `: ${p.caption}` : ''}${p.videoWarning ? `. Warning: ${p.videoWarning}` : ''}`}
             aria-pressed={selecting ? selected.has(p.id) : undefined}>
             <img src={p.src.thumb} alt="" loading="lazy" decoding="async" />
+            {#if p.type === 'video'}
+              <span class="vid" aria-hidden="true">
+                {#if p.videoStatus === 'processing'}Processing…{:else if p.videoStatus === 'failed'}Not published{:else}▶ {formatDuration(p.duration)}{/if}
+              </span>
+            {/if}
             {#if selected.has(p.id)}<span class="tick" aria-hidden="true">✓</span>{/if}
           </button>
           <div class="badges" aria-hidden="true">
             {#if !p.visible}<span class="badge">Hidden</span>{/if}
             {#if p.featured}<span class="badge">★</span>{/if}
             {#if !p.effectivePlace}<span class="badge" title="No location">⌀</span>{/if}
+            {#if p.videoWarning}<span class="badge warn">⚠</span>{/if}
           </div>
           {#if !media.phone}
             <div class="info" aria-hidden="true">
@@ -364,6 +377,11 @@
   li:hover .pick, .pick:checked, .pick:focus-visible { opacity: 1; }
   .badges { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; pointer-events: none; }
   .badge { background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 999px; }
+  .badge.warn { background: #fbbf24; color: #111; font-weight: 700; }
+  .vid {
+    position: absolute; right: 6px; bottom: 6px; padding: 1px 7px; border-radius: 999px;
+    background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 11px; font-weight: 600;
+  }
 
   /* Bottom sheet action groups */
   .group.stacked { display: block; margin-bottom: 16px; }

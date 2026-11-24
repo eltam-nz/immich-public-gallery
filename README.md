@@ -29,7 +29,8 @@ It uses the same access model as Immich Public Proxy, with a few things tightene
 | IDs in URLs | Immich UUIDs | Opaque HMAC-derived IDs |
 
 Other guarantees:
-- **Fixed Immich calls only.** public-api only ever calls `shared-links/me`, `albums/:id`, `timeline/buckets` and `timeline/bucket` (to list an album's assets on current Immich), `assets/:id` (date and EXIF), `assets/:id/thumbnail`, and the public `server/version` (logged for diagnostics). All of them use the shared-link key, never an API key. The e2e test checks this list against both current and older Immich API shapes.
+- **Fixed Immich calls only.** public-api only ever calls `shared-links/me`, `albums/:id`, `timeline/buckets` and `timeline/bucket` (to list an album's assets on current Immich), `assets/:id` (date and EXIF), `assets/:id/thumbnail`, `assets/:id/video/playback` (videos), and the public `server/version` (logged for diagnostics). All of them use the shared-link key, never an API key. The e2e test checks this list against both current and older Immich API shapes.
+- **Video metadata removed.** Videos are re-encoded with all container and stream metadata dropped, so no GPS, dates or device details are published. The e2e test checks the served file with ffprobe.
 - **Metadata allowlist.** Everything sent to the public API passes through `toPublicPhoto` in `packages/shared/src/index.ts`. Fields not copied there can't leak.
 - **Only the town or city is published.** Photo GPS is snapped to the nearest city with an offline GeoNames gazetteer, and only that city's name and its own map position are published, never a photo's coordinates. Per photo, the admin app can choose another place or hide the location.
 - **Least-privilege database.** The public role can read the admin tables but not write them. The admin role can edit the admin tables (photo overrides, collections) but can only read synced data.
@@ -152,6 +153,19 @@ The `backup` service writes a verified `pg_dump` of the database every `BACKUP_I
 
 The gallery shares one Immich album through `SHARED_LINK_KEYS`. Several comma-separated keys also work.
 
+### Videos
+Videos in the shared album are published as well as photos.
+- **Processing:** the public API downloads Immich's web-ready version of each video (using the shared-link key, like photos) and re-encodes it to **720p H.264/AAC**.
+  - It **removes all metadata**: GPS, recording date, device and rotation tags. Rotation is applied to the picture itself.
+  - It checks the result before publishing.
+  - This runs in the background, one video at a time and at low priority (`VIDEO_THREADS`, default 2), so syncing and the site stay responsive.
+  - The first sync of an album with many videos can keep the CPU busy for a while.
+- **Publishing:** a video appears on the site once its 720p file is ready. Until then the admin app shows it as **Processing…**. If one can't be processed, the admin app marks it **Not published** with a ⚠ and the reason, and it's retried after 24 hours or when the video changes in Immich.
+- **Size warnings:** every video is published, whatever its size. The admin app shows a ⚠ on videos larger than `VIDEO_WARN_MB` (default 500 MB, measured as received from Immich). The **Videos with warnings** filter lists them.
+- **Disk:** 720p files take roughly 20 MB per minute of video, in `cache/`. Like images, they're rebuilt from Immich if deleted, so they don't need backing up.
+- **Playback:** the site plays videos with the browser's own player. Files are served with byte-range support, which iPhones need.
+- **Cloudflare:** its free-plan terms say the CDN shouldn't be used to serve a disproportionate amount of video. A personal site with modest, 720p-capped video is the kind of use that's typically fine, but check the current terms if you publish a lot of video.
+
 ### Map and places: what visitors' browsers contact
 - **Map tiles:** the Map page and the small map on collection pages load tiles from OpenStreetMap (`tile.openstreetmap.org`). That's the only third-party host the site uses, and only on those pages. Tile requests carry only the site's origin as the referrer, as OpenStreetMap's usage policy asks.
 - **Place lookups:** done offline on the server, using GeoNames data built into the image. Credit: map © OpenStreetMap contributors; places © GeoNames (CC BY 4.0), shown on the map.
@@ -170,7 +184,7 @@ pnpm build && pnpm test
 ./test/e2e.sh
 ```
 
-The last command runs an end-to-end test of the full stack against a mock Immich. It needs Docker.
+The last command runs an end-to-end test of the full stack against a mock Immich. It needs Docker and ffmpeg (for the test video).
 
 Optional browser checks run against a seeded test stack. They take screenshots at phone and desktop sizes, run an accessibility scan, check tap-target and text sizes, and walk through the main admin phone workflows. They need Playwright with Chromium installed and `npm install --prefix test/ui`:
 

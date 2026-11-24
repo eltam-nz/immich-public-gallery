@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PublicCollection, PublicFeatured, PublicPhoto, PublicPlace } from '@showcase/shared';
-  import { api, formatRange, plural, previewOf } from './lib/api';
+  import { api, formatRange, mediaCount, previewOf } from './lib/api';
   import Gallery from './lib/Gallery.svelte';
   import Home from './lib/Home.svelte';
   import Icon from './lib/Icon.svelte';
@@ -147,7 +147,7 @@
       {#if route.view === 'featured'}<p class="kicker"><Icon name="star" />Selected favourites</p>{/if}
       <h1>{heading}</h1>
       <p class="meta">
-        {#if !loading && !error}<span><Icon name="photo" />{plural(photos.length, 'photo')}</span>{/if}
+        {#if !loading && !error}<span><Icon name="photo" />{mediaCount(photos.length, photos.filter((p) => p.type === 'video').length)}</span>{/if}
         {#if range}<span><Icon name="calendar" />{range}</span>{/if}
         {#if route.view === 'collection' && placeSummary}<span><Icon name="pin" />{placeSummary}</span>{/if}
       </p>

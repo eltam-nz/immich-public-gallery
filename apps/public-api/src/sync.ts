@@ -10,7 +10,7 @@ import type { Config } from './config.js';
 import type { Sql } from './db.js';
 import { assetVersion, publicId } from './ids.js';
 import { removeImages, writeImages } from './images.js';
-import { ImmichClient, LinkRevokedError, type ImmichAsset } from './immich.js';
+import { ImmichClient, LinkRevokedError, parseDuration, type ImmichAsset } from './immich.js';
 import { mapLimit } from './util.js';
 
 interface Seen {
@@ -30,6 +30,10 @@ export interface SyncResult {
 
 export class Syncer {
   private running: Promise<SyncResult> | null = null;
+  /** Which shared-link key can read each asset, from the last sync (for the video worker). */
+  readonly assetKeys = new Map<string, string>();
+  /** Called after every sync (the video worker hooks in here). */
+  onSynced: () => void = () => {};
   private readonly immich: ImmichClient;
 
   constructor(
@@ -126,6 +130,8 @@ export class Syncer {
           checksum: asset.checksum,
           version,
           taken_at: takenAt,
+          media_type: asset.type === 'VIDEO' ? 'video' : 'image',
+          duration_ms: asset.type === 'VIDEO' ? parseDuration(asset.duration) : null,
           meta: this.sql.json(meta as never),
           place: place ? this.sql.json(place as never) : null,
         })}
@@ -138,6 +144,8 @@ export class Syncer {
           taken_at = EXCLUDED.taken_at,
           meta = EXCLUDED.meta,
           place = EXCLUDED.place,
+          media_type = EXCLUDED.media_type,
+          duration_ms = EXCLUDED.duration_ms,
           synced_at = now()`;
       if (existing.get(asset.id)?.cached_version !== version) needImages.push(s);
     }
@@ -172,6 +180,9 @@ export class Syncer {
       }
     }
 
+    if (!transientFailure) this.assetKeys.clear();
+    for (const [id, s] of seen) this.assetKeys.set(id, s.key);
+
     const result: SyncResult = {
       ok: errors.length === 0,
       links: keys.length,
@@ -185,6 +196,7 @@ export class Syncer {
       INSERT INTO sync_state (key, value) VALUES ('last_sync', ${this.sql.json(state as never)})
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`;
     this.log.info({ ...result, ms: Date.now() - started }, 'sync complete');
+    this.onSynced();
     return result;
   }
 }

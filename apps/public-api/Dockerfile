@@ -8,6 +8,8 @@ RUN pnpm install --frozen-lockfile --filter "@showcase/public-api..." \
  && pnpm deploy --legacy --filter @showcase/public-api --prod /out
 
 FROM node:22-alpine
+# ffmpeg re-encodes videos to 720p and strips their metadata.
+RUN apk add --no-cache ffmpeg
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /out .

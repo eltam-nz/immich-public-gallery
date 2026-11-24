@@ -10,10 +10,15 @@
  *   GET /timeline/buckets?albumId=         (current Immich: list album assets)
  *   GET /timeline/bucket?albumId=&timeBucket=
  *   GET /assets/:id                        (checksum, date, EXIF)
- *   GET /assets/:id/thumbnail?size=preview
+ *   GET /assets/:id/thumbnail?size=preview  (photo, or a video's poster frame)
+ *   GET /assets/:id/video/playback          (videos: Immich's web-ready file)
  * IDs and time buckets taken from Immich responses are validated before they
  * are placed in a URL.
  */
+import { createWriteStream } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { z } from 'zod';
 import { mapLimit } from './util.js';
 
@@ -46,6 +51,8 @@ const assetSchema = z.object({
   id: z.string().regex(UUID_RE),
   type: z.string(),
   checksum: z.string(),
+  // Milliseconds (current Immich) or "H:MM:SS.ffffff" (older Immich).
+  duration: z.union([z.number(), z.string()]).nullish(),
   localDateTime: z.string().nullish(),
   fileCreatedAt: z.string().nullish(),
   updatedAt: z.string().nullish(),
@@ -86,12 +93,11 @@ const versionSchema = z.object({ major: z.number(), minor: z.number(), patch: z.
 
 const HIDDEN_VISIBILITY = new Set(['hidden', 'locked']);
 
-/** Zip a columnar timeline bucket into the IDs of publishable images. */
+/** Zip a columnar timeline bucket into the IDs of publishable photos and videos. */
 export function publishableIds(bucket: TimelineBucket): string[] {
   const out: string[] = [];
   bucket.id.forEach((id, i) => {
     if (!UUID_RE.test(id)) return;
-    if (bucket.isImage[i] !== true) return;
     if (bucket.isTrashed[i] === true) return;
     if (HIDDEN_VISIBILITY.has(bucket.visibility?.[i] ?? '')) return;
     out.push(id);
@@ -100,7 +106,16 @@ export function publishableIds(bucket: TimelineBucket): string[] {
 }
 
 const isPublishable = (a: ImmichAsset) =>
-  a.type === 'IMAGE' && !a.isTrashed && !HIDDEN_VISIBILITY.has(a.visibility ?? '');
+  (a.type === 'IMAGE' || a.type === 'VIDEO') && !a.isTrashed && !HIDDEN_VISIBILITY.has(a.visibility ?? '');
+
+/** Video duration in milliseconds from either Immich format; null if absent or zero. */
+export function parseDuration(d: number | string | null | undefined): number | null {
+  if (typeof d === 'number') return Number.isFinite(d) && d > 0 ? Math.round(d) : null;
+  const m = typeof d === 'string' ? /^(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)$/.exec(d.trim()) : null;
+  if (!m) return null;
+  const ms = Math.round((Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])) * 1000);
+  return ms > 0 ? ms : null;
+}
 
 export interface LinkContents {
   album: { id: string; name: string } | null;
@@ -128,12 +143,12 @@ export class ImmichClient {
     this.base = immichUrl.replace(/\/+$/, '') + '/api';
   }
 
-  private async raw(path: string, query: Record<string, string>): Promise<Response> {
+  private async raw(path: string, query: Record<string, string>, timeoutMs = this.timeoutMs): Promise<Response> {
     const qs = new URLSearchParams(query);
     const res = await fetch(`${this.base}${path}${qs.size ? `?${qs}` : ''}`, {
       headers: { accept: '*/*' },
       redirect: 'error',
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) throw new HttpError(res.status, path);
     return res;
@@ -232,6 +247,20 @@ export class ImmichClient {
       }
     });
     return out;
+  }
+
+  /**
+   * Stream a video's web-ready file (Immich's playback version) to `dest` on
+   * disk. Returns the number of bytes written. Large files never sit in memory.
+   */
+  async downloadVideo(assetId: string, key: string, dest: string, timeoutMs = 60 * 60_000): Promise<number> {
+    if (!UUID_RE.test(assetId)) throw new Error('invalid asset id');
+    const res = await this.raw(`/assets/${assetId}/video/playback`, { key }, timeoutMs);
+    if (!res.body) throw new Error('empty video response');
+    let bytes = 0;
+    const counted = Readable.fromWeb(res.body as WebReadableStream).on('data', (c: Buffer) => (bytes += c.length));
+    await pipeline(counted, createWriteStream(dest));
+    return bytes;
   }
 
   /** Download Immich's server-generated preview (already oriented, ~1440px). */

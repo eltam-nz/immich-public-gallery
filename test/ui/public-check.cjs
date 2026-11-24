@@ -18,6 +18,7 @@ const pages = [
   ['map', '/?view=map'],
   ['featured', '/?view=featured'],
   ['viewer', `/?view=all&p=${PID}`],
+  ['video', `/?view=all&p=${process.env.VIDEO_ID}`],
 ];
 const sizes = [
   ['se', { viewport: { width: 375, height: 667 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true }],
@@ -87,6 +88,30 @@ const note = (s) => { problems.push(s); };
     await p.close();
   }
   await actx.close();
+
+  // A video plays in the viewer (no CSP block), and its tile shows a play badge.
+  {
+    const ctx = await b.newContext(devices['iPhone 13']);
+    const p = await ctx.newPage();
+    const errs = [];
+    p.on('console', (m) => m.type() === 'error' && !/tile\.openstreetmap/.test(m.text()) && errs.push(m.text()));
+    await p.goto(`${WEB}/?view=all`, { waitUntil: 'networkidle' });
+    if (!(await p.locator('.grid .play').count())) note('video tile has no play badge');
+    await p.goto(`${WEB}/?view=all&p=${process.env.VIDEO_ID}`, { waitUntil: 'networkidle' });
+    const state = await p.evaluate(async () => {
+      const v = document.querySelector('dialog video');
+      if (!v) return 'no <video>';
+      v.muted = true;
+      try { await v.play(); } catch (e) { return `play failed: ${e}`; }
+      await new Promise((r) => setTimeout(r, 1200));
+      return v.readyState >= 2 && v.currentTime > 0 ? 'ok' : `readyState=${v.readyState} t=${v.currentTime}`;
+    });
+    if (state !== 'ok') note(`video playback: ${state}`);
+    if (errs.length) note(`video console errors: ${errs.join(' | ')}`);
+    const pos = await p.locator('dialog .pos').innerText();
+    if (!/^Video \d+ of/.test(pos)) note(`viewer label: ${pos}`);
+    await ctx.close();
+  }
 
   // Home page order: title, Photography, Collections, then Browse links; no Featured tile.
   {

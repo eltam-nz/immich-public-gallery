@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { PublicPhoto } from '@showcase/shared';
+  import { formatDuration, type PublicPhoto } from '@showcase/shared';
   import { formatDate, formatExposure } from './format';
   import Icon from './Icon.svelte';
 
@@ -24,6 +24,7 @@
   const exposure = $derived(formatExposure(photo.exposure));
   const hasPrev = $derived(index > 0);
   const hasNext = $derived(index < photos.length - 1);
+  const kind = $derived(photo.type === 'video' ? 'Video' : 'Photo');
 
   $effect(() => {
     dialog.showModal();
@@ -51,11 +52,14 @@
   // Swipe left/right on the photo.
   let startX = 0;
   let startY = 0;
+  let onVideo = false; // dragging on a video moves through it; it isn't a swipe
   function touchstart(e: TouchEvent) {
+    onVideo = !!(e.target as Element | null)?.closest?.('video');
     startX = e.touches[0]!.clientX;
     startY = e.touches[0]!.clientY;
   }
   function touchend(e: TouchEvent) {
+    if (onVideo) return;
     const dx = e.changedTouches[0]!.clientX - startX;
     const dy = e.changedTouches[0]!.clientY - startY;
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
@@ -69,19 +73,29 @@
   bind:this={dialog}
   {onkeydown}
   oncancel={(e) => { e.preventDefault(); onclose(); }}
-  aria-label={`Photo ${index + 1} of ${photos.length}`}
+  aria-label={`${kind} ${index + 1} of ${photos.length}`}
 >
   <div class="layout">
-    <div class="stage" role="group" aria-label="Photo. Swipe left or right for the next or previous photo." ontouchstart={touchstart} ontouchend={touchend}>
-      <img src={photo.src.preview} alt={photo.caption ?? photo.description ?? `Photo ${index + 1}`} />
+    <div class="stage" role="group" aria-label={`${kind}. Swipe left or right for the next or previous one.`} ontouchstart={touchstart} ontouchend={touchend}>
+      {#key photo.id}
+        {#if photo.type === 'video' && photo.video}
+          <!-- A new player per item, so moving on or closing always stops playback. -->
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <video src={photo.video.src} poster={photo.src.preview} controls playsinline preload="metadata"
+            aria-label={photo.caption ?? photo.description ?? `Video ${index + 1}`}></video>
+        {:else}
+          <img src={photo.src.preview} alt={photo.caption ?? photo.description ?? `Photo ${index + 1}`} />
+        {/if}
+      {/key}
     </div>
 
     <section class="info" aria-label="About this photo">
-      <p class="pos">Photo {index + 1} of {photos.length}</p>
+      <p class="pos">{kind} {index + 1} of {photos.length}</p>
       {#if photo.caption}<p class="caption">{photo.caption}</p>{/if}
       {#if photo.description && photo.description !== photo.caption}<p>{photo.description}</p>{/if}
       <dl>
         {#if date}<dt>Taken</dt><dd>{date}</dd>{/if}
+        {#if photo.video?.duration}<dt>Length</dt><dd>{formatDuration(photo.video.duration)}</dd>{/if}
         {#if photo.location}
           <dt>Place</dt>
           <dd>
@@ -102,7 +116,7 @@
       {/if}
     </section>
 
-    <nav class="controls" aria-label="Photo controls">
+    <nav class="controls" aria-label={`${kind} controls`}>
       <button class="ctl" onclick={prev} disabled={!hasPrev}><span aria-hidden="true">‹</span> Previous</button>
       <button class="ctl close" onclick={onclose} bind:this={closeBtn}><span aria-hidden="true">✕</span> Close</button>
       <button class="ctl" onclick={next} disabled={!hasNext}>Next <span aria-hidden="true">›</span></button>
@@ -116,7 +130,7 @@
     width: 100vw; height: 100dvh; max-width: none; max-height: none;
     background: var(--photo-bg); color: #f5f5f5;
   }
-  .stage img { border-radius: 0.6rem; }
+  .stage img, .stage video { border-radius: 0.6rem; }
   dialog::backdrop { background: var(--photo-bg); }
   .layout {
     height: 100%;
@@ -131,7 +145,8 @@
     min-height: 0; padding: 0.5rem;
     touch-action: pan-y;
   }
-  .stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .stage img, .stage video { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .stage video { width: 100%; height: 100%; background: #000; }
   .info {
     grid-area: info;
     padding: 0.75rem 1.25rem 0.5rem;

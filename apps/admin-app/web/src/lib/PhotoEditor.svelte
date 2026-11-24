@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AdminCollection, AdminPhoto, AdminPlace, PlaceRef } from '@showcase/shared';
   import { untrack } from 'svelte';
+  import { formatDuration } from '@showcase/shared';
   import { api, formatDate, placeLabel, type LocationChoice } from './api';
   import PlacePicker from './PlacePicker.svelte';
   import Sheet from './Sheet.svelte';
@@ -185,8 +186,13 @@
   // Swipe left/right on the photo to move between photos (phones).
   let sx = 0;
   let sy = 0;
-  const touchstart = (e: TouchEvent) => ([sx, sy] = [e.touches[0]!.clientX, e.touches[0]!.clientY]);
+  let onVideo = false; // drags on a video scrub its timeline; they aren't swipes
+  const touchstart = (e: TouchEvent) => {
+    onVideo = !!(e.target as Element | null)?.closest?.('video');
+    [sx, sy] = [e.touches[0]!.clientX, e.touches[0]!.clientY];
+  };
   function touchend(e: TouchEvent) {
+    if (onVideo) return;
     const dx = e.changedTouches[0]!.clientX - sx;
     const dy = e.changedTouches[0]!.clientY - sy;
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
@@ -201,18 +207,36 @@
 <aside aria-label="Edit photo">
   <header class="head">
     <button class="btn icon" onclick={() => leave(onclose)} aria-label="Close editor">✕</button>
-    <h2>Edit photo {#if position}<span class="muted pos">{position}</span>{/if}</h2>
+    <h2>Edit {photo.type === 'video' ? 'video' : 'photo'} {#if position}<span class="muted pos">{position}</span>{/if}</h2>
     <button class="btn icon" disabled={!hasPrev} onclick={() => leave(onprev)} aria-label="Previous photo" title="Previous (J)">‹</button>
     <button class="btn icon" disabled={!hasNext} onclick={() => leave(onnext)} aria-label="Next photo" title="Next (K)">›</button>
   </header>
 
   <div class="scroll">
     <div class="preview" role="group" aria-label="Photo preview. Swipe for the next or previous photo." ontouchstart={touchstart} ontouchend={touchend}>
-      <img src={photo.src.preview} alt={photo.caption ?? ''} />
+      {#if photo.type === 'video' && photo.videoSrc}
+        <!-- svelte-ignore a11y_media_has_caption -->
+        <video src={photo.videoSrc} poster={photo.src.preview} controls playsinline preload="metadata"></video>
+      {:else}
+        <img src={photo.src.preview} alt={photo.caption ?? ''} />
+      {/if}
     </div>
+    {#if photo.videoWarning}
+      <p class="warning" role="note">⚠ {photo.videoWarning}</p>
+    {:else if photo.videoStatus === 'processing'}
+      <p class="muted small">Processing: this video is being converted to 720p and will appear on the site when it's ready.</p>
+    {/if}
 
     <dl class="facts">
       <dt>Taken</dt><dd>{formatDate(photo.takenAt)}</dd>
+      {#if photo.type === 'video'}
+        <dt>Video</dt>
+        <dd>
+          {formatDuration(photo.duration) || 'Unknown length'}
+          {#if photo.sourceMB !== null} · {photo.sourceMB} MB from Immich{/if}
+          {#if photo.videoMB !== null} → {photo.videoMB} MB published (720p){/if}
+        </dd>
+      {/if}
       {#if photo.camera}<dt>Camera</dt><dd>{photo.camera}{photo.lens ? ` · ${photo.lens}` : ''}</dd>{/if}
       {#if photo.exactLocation}
         <dt>GPS</dt><dd>{photo.exactLocation.lat.toFixed(5)}, {photo.exactLocation.lon.toFixed(5)} <span class="muted">(private)</span></dd>
@@ -338,7 +362,11 @@
   /* min-height: 0 lets this flex child shrink and scroll instead of overflowing the panel */
   .scroll { overflow-y: auto; padding: 12px 14px; flex: 1; min-height: 0; overscroll-behavior: contain; }
   .preview { background: var(--surface-2); border-radius: 10px; overflow: hidden; display: flex; justify-content: center; touch-action: pan-y; }
-  .preview img { max-width: 100%; max-height: 260px; object-fit: contain; display: block; }
+  .preview img, .preview video { max-width: 100%; max-height: 260px; object-fit: contain; display: block; }
+  .warning {
+    margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; font-size: 13px;
+    background: #fef3c7; color: #78350f; border: 1px solid #f59e0b;
+  }
   .facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; margin: 12px 0 4px; }
   dt { color: var(--muted); }
   dd { margin: 0; overflow-wrap: anywhere; }
@@ -367,7 +395,7 @@
       align-self: stretch; height: 100dvh;
       padding-top: env(safe-area-inset-top);
     }
-    .preview img { max-height: 40vh; }
+    .preview img, .preview video { max-height: 40vh; }
     .actions { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
     .actions .btn { flex: 1; }
     .unsaved { display: none; }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PublicCollection, PublicFeatured, PublicPlace } from '@showcase/shared';
-  import { formatRange, plural } from './api';
+  import { formatRange, mediaCount, plural } from './api';
   import Icon from './Icon.svelte';
   import { href, link } from './router';
 
@@ -38,7 +38,7 @@
       <span class="feature-text">
         <span class="kicker"><Icon name="star" />Selected favourites</span>
         <h2 id="photography">Photography</h2>
-        <span class="feature-meta">{plural(featured.count, 'photo')}</span>
+        <span class="feature-meta">{mediaCount(featured.count, featured.videos)}</span>
         <span class="btn primary go">View photography <Icon name="chevron" /></span>
       </span>
     </a>
@@ -59,7 +59,7 @@
             <span class="text">
               <span class="name">{c.title}</span>
               <span class="meta">
-                <span><Icon name="photo" />{plural(c.count, 'photo')}</span>
+                <span><Icon name="photo" />{mediaCount(c.count, c.videos)}</span>
                 {#if range}<span><Icon name="calendar" />{range}</span>{/if}
               </span>
               {#if c.description}<span class="desc">{c.description}</span>{/if}
