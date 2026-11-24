@@ -74,7 +74,7 @@
 <style>
   section { max-width: 720px; }
   .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
-  .card { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 14px; display: grid; }
+  .card { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; display: grid; }
   .n { font-size: 26px; font-weight: 600; }
   h2 { font-size: 16px; }
   h3 { font-size: 14px; }

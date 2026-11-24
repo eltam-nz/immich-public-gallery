@@ -16,6 +16,7 @@ const pages = [
   ['collection', '/?c=new-zealand-2025'],
   ['all', '/?view=all'],
   ['map', '/?view=map'],
+  ['featured', '/?view=featured'],
   ['viewer', `/?view=all&p=${PID}`],
 ];
 const sizes = [

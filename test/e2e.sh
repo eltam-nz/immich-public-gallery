@@ -144,6 +144,26 @@ curl -fsS -X PUT "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$C2\",\"$COLL\"]}" $ADMI
 [ "$(code -X PUT "${AUTH[@]}" "${W[@]}" -d '{"ids":["../x"]}' $ADMIN/api/collections/order)" = 400 ] || fail "bad order body accepted"
 curl -fsS -X DELETE "${AUTH[@]}" -H "x-showcase-admin: 1" $ADMIN/api/collections/$C2 >/dev/null
 pass "collections: reorder saves the whole order at once"
+# Featured photography: photos ticked Featured, with tiles and a date range.
+[ "$(curl -fsS $WEB/api/featured | jq_ 'd.count')" = 0 ] || fail "featured not empty at start"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P1\",\"$P2\"],\"set\":{\"featured\":true}}" $ADMIN/api/photos/bulk >/dev/null
+feat=$(curl -fsS $WEB/api/featured)
+echo "$feat" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const f=JSON.parse(s);const ids=process.argv.slice(1);
+  const ok=f.count===2 && f.covers.length===2 && f.covers.every(u=>ids.includes(u.split("/")[2])) && f.dateRange && /^\d{4}-\d{2}-\d{2}$/.test(f.dateRange.from);
+  if(!ok){console.error(s);process.exit(1)}})' "$P1" "$P2" || fail "featured summary: $feat"
+[ "$(curl -fsS "$WEB/api/photos?featured=1" | jq_ 'd.length')" = 2 ] || fail "featured photos list"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P2\"],\"set\":{\"visible\":false}}" $ADMIN/api/photos/bulk >/dev/null
+[ "$(curl -fsS $WEB/api/featured | jq_ 'd.count')" = 1 ] || fail "hidden photo counted as featured"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P1\",\"$P2\"],\"set\":{\"featured\":false,\"visible\":true}}" $ADMIN/api/photos/bulk >/dev/null
+curl -fsS $WEB/api/collections | jq_ 'd.find(c=>c.slug==="holiday").dateRange.from' | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || fail "collection date range"
+pass "featured photography: only featured, visible photos; collections have date ranges"
+
+# Copy one caption to a group (bulk), then clear it.
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P2\",\"$P3\"],\"set\":{\"caption\":\"  Shared caption  \"}}" $ADMIN/api/photos/bulk >/dev/null
+[ "$(curl -fsS "$WEB/api/photos" | jq_ 'd.filter(p=>p.caption==="Shared caption").length')" = 2 ] || fail "bulk caption"
+curl -fsS -X POST "${AUTH[@]}" "${W[@]}" -d "{\"ids\":[\"$P2\",\"$P3\"],\"set\":{\"caption\":\"\"}}" $ADMIN/api/photos/bulk >/dev/null
+[ "$(curl -fsS "$WEB/api/photos" | jq_ 'd.filter(p=>p.caption==="Shared caption").length')" = 0 ] || fail "bulk caption clear"
+pass "captions: one caption copied to a group, and cleared"
 [ "$(curl -fsS "$WEB/api/photos?collection=holiday" | jq_ 'd.length')" = 2 ] || fail "public collection filter"
 p1=$(curl -fsS $WEB/api/photos/$P1)
 echo "$p1" | grep -q '"caption":"Hello world"' && echo "$p1" | grep -q '"title":"Holiday"' || fail "public photo edits: $p1"
@@ -214,7 +234,9 @@ sleep 1
 $DC exec -T backup backup.sh once >/dev/null || fail "backup.sh once (2)"
 [ "$(dumps | wc -l)" = 2 ] || fail "retention: expected 2 dumps with BACKUP_KEEP=2, got: $(dumps)"
 [ "$(stat -c %u "$BK" "$(dumps | head -1)" | sort -u)" = 1000 ] || fail "backups not owned by uid 1000"
-$DC exec -T backup pg_restore --list "/backups/$(basename "$(dumps | head -1)")" | grep -q "TABLE DATA public collections" || fail "dump missing collections data"
+# Capture first: grep -q exiting early would break the pipe and, with pipefail, fail the check.
+TOC=$($DC exec -T backup pg_restore --list "/backups/$(basename "$(dumps | head -1)")")
+grep -q "TABLE DATA public collections" <<<"$TOC" || fail "dump missing collections data"
 $DC exec -T backup backup.sh check || fail "backup healthcheck"
 ls "$BK" | grep -q '\.tmp$' && fail "temp file left behind"
 pass "backups: automatic + on demand, verified, pruned to BACKUP_KEEP, owned by uid 1000"

@@ -3,12 +3,14 @@
  * button always works and pages can be bookmarked or shared:
  *   /            home         /?view=all     all photos
  *   /?c=<id>     collection   /?place=<id>   one place      /?view=map   map
+ *   /?view=featured   featured photography
  *   &p=<id>      a photo open in the viewer
  */
 export type Route =
   | { view: 'home' }
   | { view: 'all' }
   | { view: 'map' }
+  | { view: 'featured' }
   | { view: 'collection'; id: string }
   | { view: 'place'; id: string };
 
@@ -30,6 +32,7 @@ export function parse(search: string): RouteState {
   else if (place && ID_RE.test(place)) route = { view: 'place', id: place };
   else if (view === 'all') route = { view: 'all' };
   else if (view === 'map') route = { view: 'map' };
+  else if (view === 'featured') route = { view: 'featured' };
   return { route, photo: photo && ID_RE.test(photo) ? photo : null };
 }
 

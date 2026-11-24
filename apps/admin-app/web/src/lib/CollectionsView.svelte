@@ -78,11 +78,30 @@
     [order[i], order[j]] = [order[j]!, order[i]!];
     await run(() => api.orderCollections(order), 'Order updated.');
   }
+
+  // Desktop: drag a collection by its handle onto another to move it there.
+  let dragFrom = $state<number | null>(null);
+  let dragOver = $state<number | null>(null);
+  async function drop(to: number) {
+    const from = dragFrom;
+    dragFrom = dragOver = null;
+    if (from === null || from === to) return;
+    const order = collections.map((c) => c.id);
+    const [moved] = order.splice(from, 1);
+    order.splice(to, 0, moved!);
+    await run(() => api.orderCollections(order), 'Order updated.');
+  }
 </script>
 
 <section>
   <div class="head">
-    <p class="muted intro">Collections are sub-albums inside the gallery; a photo can be in several. The public home page lists them in this order.</p>
+    <div>
+      <h2>Public order</h2>
+      <p class="muted intro">
+        The home page shows collections in this order. {media.phone ? 'Use ↑ ↓ to move one.' : 'Drag ⠿ or use ↑ ↓ to move one.'}
+        <strong>Featured photography</strong> (photos ticked Featured) always appears after them.
+      </p>
+    </div>
     <button class="btn primary" onclick={startCreate}>+ New collection</button>
   </div>
 
@@ -92,7 +111,16 @@
 
   <ul>
     {#each collections as c, i (c.id)}
-      <li class:off={!c.visible}>
+      <li class:off={!c.visible} class:dragover={dragOver === i && dragFrom !== i}
+        ondragover={(e) => { if (dragFrom !== null) { e.preventDefault(); dragOver = i; } }}
+        ondragleave={() => dragOver === i && (dragOver = null)}
+        ondrop={(e) => { e.preventDefault(); drop(i); }}>
+        <span class="pos" aria-label={`Position ${i + 1}`}>{i + 1}</span>
+        {#if !media.phone}
+          <span class="handle" draggable="true" role="button" tabindex="-1" aria-hidden="true" title="Drag to reorder"
+            ondragstart={(e) => { dragFrom = i; e.dataTransfer?.setData('text/plain', c.id); }}
+            ondragend={() => (dragFrom = dragOver = null)}>⠿</span>
+        {/if}
         <div class="cover">{#if c.cover}<img src={c.cover} alt="" loading="lazy" />{/if}</div>
         <div class="info">
           <strong>{c.title}</strong>
@@ -154,9 +182,17 @@
   .intro { margin: 0; font-size: 13px; }
   ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
   li {
-    display: grid; grid-template-columns: 64px 1fr auto auto; gap: 12px; align-items: center;
-    padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+    display: grid; grid-template-columns: auto auto 64px 1fr auto auto; gap: 12px; align-items: center;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+    box-shadow: var(--shadow);
   }
+  li.dragover { outline: 2px dashed var(--focus); outline-offset: 2px; }
+  h2 { font-size: 16px; margin: 0 0 2px; }
+  .pos {
+    display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; font-size: 13px;
+  }
+  .handle { cursor: grab; color: var(--muted); font-size: 20px; padding: 0 2px; user-select: none; }
   li.off { opacity: 0.6; }
   .cover { width: 64px; height: 64px; border-radius: 6px; background: var(--border); overflow: hidden; }
   .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -170,7 +206,8 @@
   @media (max-width: 700px) {
     .head { flex-direction: column; align-items: stretch; }
     .head .btn { width: 100%; }
-    li { grid-template-columns: 56px 1fr auto auto; gap: 8px; padding: 6px; }
+    li { grid-template-columns: auto 56px 1fr auto auto; gap: 8px; padding: 6px 8px; }
+    .pos { width: 24px; height: 24px; font-size: 12px; }
     .cover { width: 56px; height: 56px; }
     .order { gap: 4px; }
   }

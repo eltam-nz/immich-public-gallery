@@ -55,15 +55,19 @@
     height: 100%;
     padding: 0;
     border: 0;
-    background: var(--surface);
+    background: var(--surface-2);
     cursor: zoom-in;
     overflow: hidden;
-    border-radius: 0.4rem;
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 2px rgba(17, 24, 39, 0.08);
   }
   img {
     display: block;
     width: 100%;
     height: 100%;
     object-fit: cover;
+    transition: transform 0.25s ease;
   }
+  button:hover img { transform: scale(1.03); }
+  @media (max-width: 40rem) { .grid { gap: 0.35rem; } button { border-radius: 0.55rem; } }
 </style>

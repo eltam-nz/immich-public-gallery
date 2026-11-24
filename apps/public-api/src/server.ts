@@ -11,6 +11,7 @@ import {
   toPublicPhoto,
   type PhotoRow,
   type PublicCollection,
+  type PublicFeatured,
   type PublicPlace,
   type SiteInfo,
 } from '@showcase/shared';
@@ -148,9 +149,12 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
   // date), so the tiles span the whole collection and change between visits.
   // A cover chosen in the admin app is always included, first.
   app.get('/api/collections', async (): Promise<PublicCollection[]> => {
-    const rows = await sql<(Omit<PublicCollection, 'covers'> & { pk: number; cover_id: string | null; cover_version: string | null })[]>`
+    const rows = await sql<(Omit<PublicCollection, 'covers' | 'dateRange'> & {
+      pk: number; cover_id: string | null; cover_version: string | null; first: string | null; last: string | null;
+    })[]>`
       SELECT c.id AS pk, c.public_id AS id, c.slug, c.title, c.description,
              COUNT(a.public_id)::int AS count,
+             to_char(MIN(a.taken_at), 'YYYY-MM-DD') AS first, to_char(MAX(a.taken_at), 'YYYY-MM-DD') AS last,
              ca.public_id AS cover_id, ca.cached_version AS cover_version
       FROM collections c
       JOIN collection_photos cp ON cp.collection_id = c.id
@@ -182,13 +186,41 @@ export async function buildServer(cfg: Config, sql: Sql): Promise<FastifyInstanc
       list.push({ id: p.public_id, version: p.cached_version });
       byCollection.set(p.pk, list);
     }
-    return rows.map(({ pk, cover_id, cover_version, ...c }) => {
+    return rows.map(({ pk, cover_id, cover_version, first, last, ...c }) => {
       let tiles = byCollection.get(pk) ?? [];
       if (cover_id && cover_version) {
         tiles = [{ id: cover_id, version: cover_version }, ...tiles.filter((t) => t.id !== cover_id)];
       }
-      return { ...c, covers: tiles.slice(0, 4).map((t) => imageUrl(t.id, t.version, 'thumb')) };
+      return {
+        ...c,
+        dateRange: first && last ? { from: first, to: last } : null,
+        covers: tiles.slice(0, 4).map((t) => imageUrl(t.id, t.version, 'thumb')),
+      };
     });
+  });
+
+  // "Featured photography": the photos ticked Featured in the admin app, shown as
+  // their own section on the home page. Four random tiles spread across them.
+  app.get('/api/featured', async (): Promise<PublicFeatured> => {
+    const [summary] = await sql<{ count: number; first: string | null; last: string | null }[]>`
+      SELECT COUNT(*)::int AS count,
+             to_char(MIN(a.taken_at), 'YYYY-MM-DD') AS first, to_char(MAX(a.taken_at), 'YYYY-MM-DD') AS last
+      FROM assets a JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
+      WHERE a.cached_version IS NOT NULL AND pm.visible AND pm.featured`;
+    const picks = await sql<{ public_id: string; cached_version: string }[]>`
+      SELECT public_id, cached_version FROM (
+        SELECT DISTINCT ON (q) q, public_id, cached_version FROM (
+          SELECT a.public_id, a.cached_version,
+                 ntile(4) OVER (ORDER BY a.taken_at NULLS LAST, a.public_id) AS q
+          FROM assets a JOIN photos_meta pm ON pm.immich_asset_id = a.immich_asset_id
+          WHERE a.cached_version IS NOT NULL AND pm.visible AND pm.featured
+        ) m ORDER BY q, random()
+      ) x ORDER BY q`;
+    return {
+      count: summary?.count ?? 0,
+      dateRange: summary?.first && summary.last ? { from: summary.first, to: summary.last } : null,
+      covers: picks.map((p) => imageUrl(p.public_id, p.cached_version, 'thumb')),
+    };
   });
 
   // /img/<publicId>/<version>/<size>.webp — served only from the local cache.

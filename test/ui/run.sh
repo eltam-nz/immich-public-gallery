@@ -48,6 +48,9 @@ done
 NZ_IDS=$(curl -fsS "${H[@]}" $A/api/photos | json 'JSON.stringify(d.filter(p=>p.gpsPlace?.countryCode==="NZ").slice(0,6).map(p=>p.id))')
 NZ=$(curl -fsS "${H[@]}" $A/api/collections | json 'd.find(c=>c.slug==="new-zealand-2025").id')
 curl -fsS -X POST "${H[@]}" -d "{\"ids\":$NZ_IDS,\"addTo\":\"$NZ\"}" $A/api/photos/bulk >/dev/null
+# Four featured photos for the "Featured photography" section.
+FEAT=$(curl -fsS "${H[@]}" $A/api/photos | json 'JSON.stringify(d.slice(-4).map(p=>p.id))')
+curl -fsS -X POST "${H[@]}" -d "{\"ids\":$FEAT,\"set\":{\"featured\":true}}" $A/api/photos/bulk >/dev/null
 export PHOTO_ID=$(curl -fsS http://127.0.0.1:8088/api/photos | json 'd[0].id')
 
 status=0

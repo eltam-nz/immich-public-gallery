@@ -5,8 +5,11 @@ A self-hosted public photo site built from one shared Immich album. It runs as a
 **Status:** foundation, admin app, backups and the visitor-facing site are done. One Immich album is shared through a link key. Everything else is managed inside the gallery, from a private admin app: collections (sub-albums), captions, tags, visibility and each photo's place.
 
 **The public site** is built for phones and older visitors: large text, high contrast, big labelled buttons and simple navigation (Home, collections, All photos, Map).
-- **Home page:** collection cards. Each card shows a 2×2 tile of four random photos spread across the collection, which changes between visits. A cover chosen in the admin app is always one of the four.
-- **Collection page:** a small fixed map of the towns where its photos were taken, with "Taken in" links to each place, above the photos.
+- **Home page:**
+  - Quick links (All photos, Map, Featured).
+  - Collection cards in the order you set in the admin app. Each card shows a 2×2 tile of four random photos spread across the collection, which changes between visits, plus the photo count and date range. A cover chosen in the admin app is always one of the four.
+  - A distinct **Featured photography** panel below the collections, holding every photo ticked Featured.
+- **Collection page:** a large header photo with the title, dates and places, then a small fixed map of the towns where its photos were taken (with "Taken in" links), then the photos.
 - **Map:** photos grouped by town or city, plus a plain list of places.
 - **Photo viewer:** large Previous / Close / Next buttons and swipe support.
 
@@ -95,18 +98,19 @@ Shared tunnel: your existing cloudflared ─(TUNNEL_NETWORK)→ public-web (alia
 - Create the Access application (step 3) **before** the admin route. Even if the route goes live first, the app rejects everyone, because no valid Access token exists yet.
 
 In the admin app:
-- **Photos:** show or hide photos, and edit captions, tags and sort order. The "Featured" flag is kept but currently isn't used by the public site. Bulk-select to hide, show or feature photos, or add them to (or remove them from) a collection.
+- **Photos:** show or hide photos, and edit captions, tags and sort order. Ticking **Featured** adds a photo to the home page's **Featured photography** section.
+- **Copy to a group:** select photos, then open the photo to copy from (on a phone: **Actions → Copy from a photo…** and tap it). In its editor, **Copy to other photos** copies its caption and/or place to the selected ones. **Set caption…** in the bulk actions gives every selected photo the same caption, or clears them. Bulk-select to hide, show or feature photos, or add them to (or remove them from) a collection.
 - **Location:** each photo shows its town or city, worked out from its GPS. You can choose another place (search any town or city, or pick one already in the gallery), switch back to GPS, or hide the location.
   - **Copy a place to other photos:** tick the photos that need it, open a photo that already has the right place, and click **Apply \<place\> to N selected photos**.
   - **Find photos without a place:** use the **No location** filter.
   - **Bulk:** the bulk bar's **Set location…** does the same for all ticked photos at once.
-- **Collections:** sub-albums inside the gallery. A photo can be in several. Each has a title, an optional URL name (`/?c=<name>`), a description, visibility, order and a cover photo.
+- **Collections:** sub-albums inside the gallery. A photo can be in several. Each has a title, an optional URL name (`/?c=<name>`), a description, visibility and a cover photo. Their **public order** on the home page is set with ↑ ↓ (or by dragging on desktop).
 - **Sync:** last sync result, Immich version, and **Sync now**.
 
 **On a phone** the admin app has bottom tabs (Photos, Collections, Sync).
 - **Select several photos:** tap **Select**, tap the photos, then **Actions** for show/hide, collections and location.
 - **Edit photos one after another:** in the editor, use **‹ ›** (or swipe on the photo) and **Save & next**. The phone's **Back** button closes the editor.
-- **Reorder collections:** use the **↑ ↓** buttons.
+- **Reorder collections:** use the **↑ ↓** buttons, or drag ⠿ on desktop.
 - **On desktop:** Ctrl/⌘-click or Shift-click to select, and **J** / **K** for the previous / next photo and **Ctrl+S** to save in the editor.
 
 If the admin container keeps restarting, check its logs. It refuses to start with a clear message when an Access setting is missing.

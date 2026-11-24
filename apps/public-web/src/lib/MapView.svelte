@@ -88,19 +88,20 @@
   .map {
     height: 60vh; min-height: 18rem;
     border-radius: var(--radius); overflow: hidden;
-    border: 0.125rem solid var(--border);
+    box-shadow: var(--shadow-lg);
     margin-bottom: 2rem;
-    background: var(--surface);
+    background: var(--surface-2);
   }
   h2 { font-size: 1.35rem; margin-bottom: 0.75rem; }
   .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; max-width: 45rem; }
   .list a {
-    display: flex; align-items: center; gap: 1rem; min-height: 5rem; padding: 0.5rem;
-    border: 0.125rem solid var(--border); border-radius: var(--radius);
+    display: flex; align-items: center; gap: 1rem; min-height: 5rem; padding: 0.55rem;
+    background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+    border: 0.125rem solid transparent;
     color: var(--fg); text-decoration: none;
   }
-  .list a:hover { border-color: var(--fg); }
-  .thumb { flex: none; width: 4.5rem; height: 4.5rem; border-radius: 0.5rem; overflow: hidden; background: var(--surface); }
+  .list a:hover { border-color: var(--border); }
+  .thumb { flex: none; width: 4.5rem; height: 4.5rem; border-radius: var(--radius-sm); overflow: hidden; background: var(--surface-2); }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .text { display: grid; flex: 1; min-width: 0; }
   .name { font-weight: 700; font-size: 1.15rem; }

@@ -51,6 +51,15 @@ export interface PublicCollection {
    * each quarter of the collection (by date); an admin-chosen cover comes first.
    */
   covers: string[];
+  /** Earliest and latest photo dates (YYYY-MM-DD), or null if undated. */
+  dateRange: { from: string; to: string } | null;
+}
+
+/** The "Featured photography" section: photos ticked Featured in the admin app. */
+export interface PublicFeatured {
+  count: number;
+  dateRange: { from: string; to: string } | null;
+  covers: string[];
 }
 
 export interface CollectionRef {

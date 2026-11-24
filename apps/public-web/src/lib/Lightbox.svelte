@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PublicPhoto } from '@showcase/shared';
   import { formatDate, formatExposure } from './format';
+  import Icon from './Icon.svelte';
 
   let {
     photos,
@@ -85,7 +86,7 @@
           <dt>Place</dt>
           <dd>
             <button class="linkish" onclick={() => onplace(photo.location!.placeId)}>
-              {photo.location.name}, {photo.location.country}
+              <Icon name="pin" />{photo.location.name}, {photo.location.country}
             </button>
           </dd>
         {/if}
@@ -115,6 +116,7 @@
     width: 100vw; height: 100dvh; max-width: none; max-height: none;
     background: var(--photo-bg); color: #f5f5f5;
   }
+  .stage img { border-radius: 0.6rem; }
   dialog::backdrop { background: var(--photo-bg); }
   .layout {
     height: 100%;
@@ -134,34 +136,40 @@
     grid-area: info;
     padding: 0.75rem 1.25rem 0.5rem;
     max-height: 34dvh; overflow-y: auto;
-    border-top: 0.0625rem solid #444;
+    background: #14171c;
+    border-top: 0.0625rem solid #2b3038;
   }
-  .pos { margin: 0; color: #d4d4d4; }
+  .pos {
+    display: inline-block; margin: 0; padding: 0.05rem 0.7rem; border-radius: 999px;
+    background: #2b3038; color: #e5e7eb; font-size: 0.9rem; font-weight: 600;
+  }
   .caption { font-size: 1.2rem; font-weight: 600; margin: 0.25rem 0; }
   dl { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0; }
   dt { color: #d4d4d4; }
   dd { margin: 0; overflow-wrap: anywhere; }
   .linkish {
-    background: none; border: 0; padding: 0; color: #a9c8ff; text-decoration: underline;
+    background: none; border: 0; padding: 0; color: #a7f3d0; text-decoration: underline;
     cursor: pointer; text-align: left; min-height: 2.75rem;
+    display: inline-flex; align-items: center; gap: 0.35rem;
   }
   .tags { list-style: none; padding: 0; margin: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
-  .tags li { border: 0.0625rem solid #777; padding: 0.15rem 0.75rem; border-radius: 999px; }
+  .tags li { background: #2b3038; padding: 0.15rem 0.8rem; border-radius: 999px; }
   .controls {
     grid-area: controls;
     display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;
     padding: 0.6rem 0.75rem;
     padding-bottom: max(0.6rem, env(safe-area-inset-bottom));
-    background: #000;
+    background: #0b0d10;
   }
   .ctl {
     min-height: 3.25rem;
-    border: 0.125rem solid #f5f5f5; border-radius: 999px;
-    background: transparent; color: #f5f5f5;
+    border: 0.125rem solid #4b5563; border-radius: 999px;
+    background: #1f242c; color: #f5f5f5;
     font-weight: 700; font-size: 1rem; cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
   }
-  .ctl.close { background: #f5f5f5; color: #000; }
+  .ctl.close { background: #f5f5f5; border-color: #f5f5f5; color: #000; }
+  .ctl:not(:disabled):hover { border-color: #f5f5f5; }
   .ctl:disabled { opacity: 0.3; cursor: default; }
   .ctl span { font-size: 1.4rem; line-height: 1; }
 

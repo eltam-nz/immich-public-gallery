@@ -53,7 +53,16 @@ const photoPatch = z
 const bulkBody = z
   .object({
     ids: z.array(PUBLIC_ID).min(1).max(5000),
-    set: z.object({ visible: z.boolean(), featured: z.boolean() }).partial().strict().optional(),
+    set: z
+      .object({
+        visible: z.boolean(),
+        featured: z.boolean(),
+        // Copy one caption to a group of photos (null clears it).
+        caption: z.string().max(2000).transform((v) => v.trim() || null).nullable(),
+      })
+      .partial()
+      .strict()
+      .optional(),
     location: locationBody.optional(),
     addTo: PUBLIC_ID.optional(),
     removeFrom: PUBLIC_ID.optional(),

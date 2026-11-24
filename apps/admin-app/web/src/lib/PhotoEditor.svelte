@@ -94,15 +94,26 @@
     }
   }
 
-  // Copy this photo's place to the other selected photos.
-  async function applyToSelected() {
+  // Copy this photo's caption and/or place to the other selected photos.
+  let copyCaption = $state(!!initial.caption);
+  let copyPlace = $state(!!initial.effectivePlace);
+  const captionText = $derived(caption.trim());
+
+  async function copyToSelected() {
     const place = photo.effectivePlace;
-    if (!place || !others.length) return;
+    const withCaption = copyCaption && !!captionText;
+    const withPlace = copyPlace && !!place;
+    if ((!withCaption && !withPlace) || !others.length) return;
     busy = true;
     try {
-      const { updated } = await api.bulk({ ids: others, location: { mode: 'place', placeId: place.id } });
+      const { updated } = await api.bulk({
+        ids: others,
+        ...(withCaption && { set: { caption: captionText } }),
+        ...(withPlace && { location: { mode: 'place' as const, placeId: place!.id } }),
+      });
       await onrefresh();
-      notify(`${place.name} applied to ${updated} photo${updated === 1 ? '' : 's'}.`);
+      const what = [withCaption && 'Caption', withPlace && place!.name].filter(Boolean).join(' and ');
+      notify(`${what} copied to ${updated} photo${updated === 1 ? '' : 's'}.`);
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
@@ -250,12 +261,26 @@
         <PlacePicker {galleryPlaces} oncancel={() => (picking = false)}
           onpick={(p: PlaceRef) => setLocation({ mode: 'place', placeId: p.id }, `Location set to ${p.name}.`)} />
       {/if}
-      {#if photo.effectivePlace && others.length}
-        <button type="button" class="btn primary apply" disabled={busy} onclick={applyToSelected}>
-          Apply {photo.effectivePlace.name} to {others.length} selected photo{others.length === 1 ? '' : 's'}
+    </section>
+
+    <section class="copy" aria-label="Copy to selected photos">
+      <h3>Copy to other photos</h3>
+      {#if others.length}
+        <p class="small">Copy from this photo to the <strong>{others.length} selected photo{others.length === 1 ? '' : 's'}</strong>:</p>
+        <label class="check">
+          <input type="checkbox" bind:checked={copyCaption} disabled={!captionText} />
+          Caption{#if captionText}: <span class="quote">“{captionText.length > 40 ? `${captionText.slice(0, 40)}…` : captionText}”</span>{:else}<span class="muted"> (none)</span>{/if}
+        </label>
+        <label class="check">
+          <input type="checkbox" bind:checked={copyPlace} disabled={!photo.effectivePlace} />
+          Place{#if photo.effectivePlace}: <strong>{photo.effectivePlace.name}</strong>{:else}<span class="muted"> (none)</span>{/if}
+        </label>
+        <button type="button" class="btn primary apply" onclick={copyToSelected}
+          disabled={busy || !((copyCaption && captionText) || (copyPlace && photo.effectivePlace))}>
+          Copy to {others.length} photo{others.length === 1 ? '' : 's'}
         </button>
-      {:else if photo.effectivePlace}
-        <p class="muted small">Tip: select other photos in the grid to copy this place to them.</p>
+      {:else}
+        <p class="muted small">Select other photos in the grid ({media.phone ? 'tap Select' : 'Ctrl/⌘-click'}) to copy this photo's caption or place to them.</p>
       {/if}
     </section>
 
@@ -303,7 +328,7 @@
 
 <style>
   aside {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
     align-self: start; position: sticky; top: 64px; max-height: calc(100vh - 80px);
     display: flex; flex-direction: column; overflow: hidden;
   }
@@ -312,7 +337,7 @@
   .pos { font-weight: 400; font-size: 13px; margin-left: 4px; }
   /* min-height: 0 lets this flex child shrink and scroll instead of overflowing the panel */
   .scroll { overflow-y: auto; padding: 12px 14px; flex: 1; min-height: 0; overscroll-behavior: contain; }
-  .preview { background: var(--border); border-radius: 6px; display: flex; justify-content: center; touch-action: pan-y; }
+  .preview { background: var(--surface-2); border-radius: 10px; overflow: hidden; display: flex; justify-content: center; touch-action: pan-y; }
   .preview img { max-width: 100%; max-height: 260px; object-fit: contain; display: block; }
   .facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; margin: 12px 0 4px; }
   dt { color: var(--muted); }
@@ -323,6 +348,7 @@
   .small { font-size: 12px; }
   .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .apply { margin-top: 10px; width: 100%; white-space: normal; }
+  .quote { font-style: italic; overflow-wrap: anywhere; }
   .colls { list-style: none; margin: 0; padding: 0; }
   .colls li { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .link { background: none; border: 0; color: var(--focus); cursor: pointer; padding: 0 4px; font-size: 13px; min-height: var(--tap); }
